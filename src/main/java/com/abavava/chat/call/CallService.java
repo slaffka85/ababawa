@@ -56,6 +56,9 @@ public class CallService implements CallCommands {
     public record StartInput(UUID calleeId, String kind, UUID conversationId) {
     }
 
+    private record CallParticipants(User caller, User callee) {
+    }
+
     private final CallRepository repo;
     private final UserLookup users;
     private final ChatCommands chat;
@@ -99,83 +102,108 @@ public class CallService implements CallCommands {
      * Если вызываемый не в сети, звонок сразу фиксируется как missed.
      */
     public Call start(UUID actor, StartInput in) {
+        CallKind kind = validateStartInput(actor, in);
+        CallParticipants participants = loadParticipants(actor, in.calleeId());
+        ensureAvailable(actor, in.calleeId());
+        UUID conversationId = resolveConversationId(actor, in.calleeId(), in.conversationId());
+        Call created = createCall(actor, in.calleeId(), conversationId, kind);
+        return notifyCallStarted(created, actor, participants);
+    }
+
+    private static CallKind validateStartInput(UUID actor, StartInput in) {
         if (in.calleeId() == null) {
             throw AbvException.invalidField("callee_id", "callee_id is required");
         }
         if (in.calleeId().equals(actor)) {
             throw AbvException.invalid("cannot call yourself");
         }
-        CallKind kind = parseKind(in.kind());
+        return parseKind(in.kind());
+    }
 
-        // Профили обеих сторон нужны, чтобы каждая сторона получила в поле peer
-        // собеседника: звонящий — вызываемого, вызываемый — звонящего.
+    private CallParticipants loadParticipants(UUID callerId, UUID calleeId) {
         User caller;
         try {
-            caller = users.byId(actor);
+            caller = users.byId(callerId);
         } catch (RuntimeException e) {
             throw AbvException.internal(e);
         }
+
         User callee;
         try {
-            callee = users.byId(in.calleeId());
+            callee = users.byId(calleeId);
         } catch (RuntimeException e) {
             throw AbvException.notFound("user you are calling does not exist");
         }
+        return new CallParticipants(caller, callee);
+    }
 
+    private void ensureAvailable(UUID callerId, UUID calleeId) {
         // Один активный звонок на пользователя в любой роли: частичные уникальные
         // индексы ловят только совпадение роли, поэтому проверяем явно.
-        if (repo.activeForUser(actor) != null) {
+        if (repo.activeForUser(callerId) != null) {
             throw AbvException.conflict("you are already in a call");
         }
-        if (repo.activeForUser(in.calleeId()) != null) {
+        if (repo.activeForUser(calleeId) != null) {
             throw AbvException.conflict("the person you are calling is busy");
         }
+    }
 
-        UUID conversationId = in.conversationId();
+    private UUID resolveConversationId(UUID callerId, UUID calleeId, UUID conversationId) {
         if (conversationId != null) {
             List<UUID> members = chat.memberIds(conversationId);
-            if (members == null || !members.contains(actor) || !members.contains(in.calleeId())) {
+            if (members == null || !members.contains(callerId) || !members.contains(calleeId)) {
                 throw AbvException.notFound("conversation not found");
             }
-        } else {
-            ChatCommands.DirectResult direct = chat.ensureDirect(actor, in.calleeId());
-            conversationId = direct.view().conversation().id();
+            return conversationId;
         }
+        ChatCommands.DirectResult direct = chat.ensureDirect(callerId, calleeId);
+        return direct.view().conversation().id();
+    }
 
+    private Call createCall(UUID callerId, UUID calleeId, UUID conversationId, CallKind kind) {
         Call created = repo.create(new CallRepository.CreateCallInput(
-                conversationId, actor, in.calleeId(), kind));
-        repo.logEvent(created.id(), actor, "created", Map.of("kind", kind.json()));
+                conversationId, callerId, calleeId, kind));
+        repo.logEvent(created.id(), callerId, "created", Map.of("kind", kind.json()));
+        return created;
+    }
 
+    private Call notifyCallStarted(Call created, UUID callerId, CallParticipants participants) {
         Broadcaster broadcaster = broadcaster();
+        broadcaster.sendToUsers(List.of(callerId), Events.newEvent(Events.CALL_CREATED,
+                new Events.CallPayload(created.withPeer(participants.callee()))));
 
-        // Звонящий сразу видит исходящий вызов.
-        broadcaster.sendToUsers(List.of(actor),
-                Events.newEvent(Events.CALL_CREATED, new Events.CallPayload(created.withPeer(callee))));
-
-        // Для выключенного/уснувшего Android клиента оставляем звонок ringing,
-        // если у аккаунта зарегистрировано устройство и настроен FCM.
-        boolean canPush = pushSender.enabled() && pushDevices.hasDevices(in.calleeId());
-        if (!broadcaster.isOnline(in.calleeId()) && !canPush) {
-            Call missed = repo.transition(new CallRepository.TransitionInput(
-                    created.id(), CallStatus.RINGING, CallStatus.MISSED, null, REASON_TIMEOUT));
-            repo.logEvent(created.id(), null, "missed", Map.of("reason", "callee offline"));
-            sendCallEvent(Events.CALL_UPDATED, missed, List.of(actor));
-            return missed;
+        UUID calleeId = created.calleeId();
+        boolean canPush = pushSender.enabled() && pushDevices.hasDevices(calleeId);
+        if (!broadcaster.isOnline(calleeId) && !canPush) {
+            return markCallMissed(created, callerId);
         }
 
-        broadcaster.sendToUsers(List.of(in.calleeId()),
-                Events.newEvent(Events.CALL_INCOMING, new Events.CallPayload(created.withPeer(caller))));
+        broadcaster.sendToUsers(List.of(calleeId), Events.newEvent(Events.CALL_INCOMING,
+                new Events.CallPayload(created.withPeer(participants.caller()))));
         if (canPush) {
-            for (String token : pushDevices.tokens(in.calleeId())) {
-                try {
-                    pushSender.sendIncomingCall(token, created, caller.displayName());
-                } catch (RuntimeException e) {
-                    log.warn("incoming call push failed: call_id={} callee_id={}", created.id(), in.calleeId(), e);
-                }
-            }
+            sendIncomingCallPushes(created, participants.caller());
         }
         armRingTimer(created.id());
         return created;
+    }
+
+    private Call markCallMissed(Call created, UUID callerId) {
+        Call missed = repo.transition(new CallRepository.TransitionInput(
+                created.id(), CallStatus.RINGING, CallStatus.MISSED, null, REASON_TIMEOUT));
+        repo.logEvent(created.id(), null, "missed", Map.of("reason", "callee offline"));
+        sendCallEvent(Events.CALL_UPDATED, missed, List.of(callerId));
+        return missed;
+    }
+
+    private void sendIncomingCallPushes(Call call, User caller) {
+        for (String token : pushDevices.tokens(call.calleeId())) {
+            try {
+                pushSender.sendIncomingCall(token, call, caller.displayName());
+            } catch (RuntimeException e) {
+                log.warn("incoming call push failed: call_id={} callee_id={}",
+                        call.id(), call.calleeId(), e);
+            }
+        }
     }
 
     // ------------------------------------------------- accept / reject / end

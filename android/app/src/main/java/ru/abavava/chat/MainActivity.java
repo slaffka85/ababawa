@@ -22,6 +22,8 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     private static final String SERVER_URL_KEY = "server_url";
+    private static final String LEGACY_DEFAULT_SERVER_URL = "https://192.168.1.222:5174";
+    private static final String DEFAULT_SERVER_URL = "https://abavava.tssv85.com";
     private static final int MEDIA_PERMISSION_REQUEST = 4102;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
     private static volatile boolean visible;
@@ -78,10 +80,7 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
         }
 
-        String savedUrl = getPreferences(MODE_PRIVATE).getString(SERVER_URL_KEY, null);
-        //if (savedUrl == null || savedUrl.trim().isEmpty())
-            askForServerUrl();
-        //else webView.loadUrl(savedUrl);
+        askForServerUrl();
     }
 
     @Override protected void onResume() { super.onResume(); visible = true; }
@@ -121,11 +120,16 @@ public class MainActivity extends Activity {
 
     private void askForServerUrl() {
         EditText input = new EditText(this);
-        input.setHint("https://192.168.1.222:5174");
+        input.setHint(DEFAULT_SERVER_URL);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         input.setSingleLine(true);
         String saved = getPreferences(MODE_PRIVATE).getString(SERVER_URL_KEY, "");
-        input.setText(saved);
+        String normalizedSaved = saved.trim().replaceAll("/+$", "");
+        if (normalizedSaved.equals(LEGACY_DEFAULT_SERVER_URL)) {
+            saved = DEFAULT_SERVER_URL;
+            getPreferences(MODE_PRIVATE).edit().putString(SERVER_URL_KEY, saved).apply();
+        }
+        input.setText(saved.trim().isEmpty() ? DEFAULT_SERVER_URL : saved);
 
         new AlertDialog.Builder(this)
                 .setTitle("Адрес сервера")
