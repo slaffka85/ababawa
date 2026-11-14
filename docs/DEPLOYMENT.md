@@ -172,7 +172,8 @@ Coturn запускается в host network mode, чтобы корректн�
 TURN URL формируется как `turn:<ABV_DOMAIN>:3478?transport=udp`. Сервер слушает
 UDP 3478 и выдает relay-порты UDP 49160–49200; TCP и TLS listener отключены.
 Образ coturn закреплен на версии 4.19.0-r0. Начиная с 4.18 DTLS listener и CLI
-выключены по умолчанию; не передавайте удаленные флаги `--no-dtls` и `--no-cli`.
+выключены по умолчанию; старые флаги `--no-dtls`, `--no-cli` и `--no-loopback-peers`
+не передаются. Loopback peers запрещены по умолчанию.
 Workflow открывает эти порты в активном UFW или firewalld, если deploy-пользователю
 доступен `sudo -n`. Если у VPS есть отдельный firewall/security group в панели
 провайдера, там также должны быть разрешены входящие UDP 3478 и 49160–49200.

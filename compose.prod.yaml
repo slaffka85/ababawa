@@ -62,7 +62,6 @@ services:
       - --user-quota=8
       - --total-quota=64
       - --no-multicast-peers
-      - --no-loopback-peers
     restart: unless-stopped
 
   web:
