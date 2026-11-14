@@ -194,6 +194,26 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
             'cd /opt/abavava && docker compose --env-file .env.production --env-file .deploy.env -f compose.prod.yaml up -d --remove-orphans'
 
+      - name: Verify coturn UDP listener
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            state="$(docker inspect --format '{{.State.Status}}' abavava-coturn-1 2>/dev/null || true)"
+            if [ "$state" = running ] && ss -H -lun 'sport = :3478' | grep -q .; then
+              echo 'coturn is running and listening on UDP 3478.'
+              exit 0
+            fi
+            sleep 1
+          done
+          docker inspect --format 'coturn state={{.State.Status}} exit={{.State.ExitCode}}' abavava-coturn-1 >&2 || true
+          docker logs --tail=40 abavava-coturn-1 >&2 || true
+          exit 1
+          REMOTE
+
       - name: Log out from GHCR on VPS
         if: always()
         continue-on-error: true

@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
 
   coturn:
-    image: coturn/coturn:4.18.0
+    image: coturn/coturn:4.19.0-r0
     network_mode: host
     command:
       - -n
@@ -52,7 +52,6 @@ services:
       - --listening-port=3478
       - --no-tcp
       - --no-tls
-      - --no-dtls
       - --no-tcp-relay
       - --lt-cred-mech
       - --fingerprint
@@ -62,7 +61,6 @@ services:
       - --max-port=49200
       - --user-quota=8
       - --total-quota=64
-      - --no-cli
       - --no-multicast-peers
       - --no-loopback-peers
     restart: unless-stopped
