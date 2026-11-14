@@ -167,7 +167,8 @@ JSON и задайте `ABV_FCM_SERVICE_ACCOUNT_FILE` для API-сервиса 
 
 Coturn запускается в host network mode, чтобы корректно обслуживать ограниченный
 диапазон UDP relay-портов. Deploy workflow создает случайные TURN credentials,
-если они еще не заданы, и сохраняет их только в `/opt/abavava/.env.production`.
+если они еще не заданы, и сохраняет их в закрытом `/opt/abavava/.deploy.env`.
+Файл `.env.production` остается под управлением владельца и не меняется workflow.
 TURN URL формируется как `turn:<ABV_DOMAIN>:3478?transport=udp`. Сервер слушает
 UDP 3478 и выдает relay-порты UDP 49160–49200; TCP, TLS и DTLS listener отключены.
 Workflow открывает эти порты в активном UFW или firewalld, если deploy-пользователю

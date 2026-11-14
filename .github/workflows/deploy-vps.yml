@@ -78,6 +78,17 @@ jobs:
             compose.prod.yaml .env.production.example \
             "$VPS_USER@$VPS_HOST:/opt/abavava/"
 
+      - name: Write deployment image tags on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          API_IMAGE: ghcr.io/${{ github.repository_owner }}/abavava-api:${{ github.sha }}
+          WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/abavava-web:${{ github.sha }}
+        run: |
+          printf 'ABV_API_IMAGE=%s\nABV_WEB_IMAGE=%s\n' "$API_IMAGE" "$WEB_IMAGE" \
+            | ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
+              'umask 077; cat > /opt/abavava/.deploy.env'
+
       - name: Initialize UDP TURN credentials on VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -86,23 +97,22 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
           cd /opt/abavava
-          test -f .env.production
-          chmod 600 .env.production
+          test -r .env.production
+          test -w .deploy.env
 
-          domain="$(sed -n 's/^ABV_DOMAIN=//p' .env.production | tail -n 1)"
+          domain="$(sed -n 's/^ABV_DOMAIN=//p' .env.production | tr -d '\r' | tail -n 1)"
           case "$domain" in
             ''|*[!A-Za-z0-9.-]*) echo 'ABV_DOMAIN must be a hostname' >&2; exit 1 ;;
           esac
 
-          username="$(sed -n 's/^ABV_TURN_USERNAME=//p' .env.production | tail -n 1)"
-          credential="$(sed -n 's/^ABV_TURN_CREDENTIAL=//p' .env.production | tail -n 1)"
+          username="$(sed -n 's/^ABV_TURN_USERNAME=//p' .deploy.env | tail -n 1)"
+          credential="$(sed -n 's/^ABV_TURN_CREDENTIAL=//p' .deploy.env | tail -n 1)"
           if [ -z "$username" ]; then username="abv_$(openssl rand -hex 8)"; fi
           if [ -z "$credential" ]; then credential="$(openssl rand -hex 32)"; fi
 
-          sed -i '/^ABV_TURN_URL=/d; /^ABV_TURN_USERNAME=/d; /^ABV_TURN_CREDENTIAL=/d' .env.production
+          sed -i '/^ABV_TURN_URL=/d; /^ABV_TURN_USERNAME=/d; /^ABV_TURN_CREDENTIAL=/d' .deploy.env
           printf '\nABV_TURN_URL=turn:%s:3478?transport=udp\nABV_TURN_USERNAME=%s\nABV_TURN_CREDENTIAL=%s\n' \
-            "$domain" "$username" "$credential" >> .env.production
-          chmod 600 .env.production
+            "$domain" "$username" "$credential" >> .deploy.env
           REMOTE
 
       - name: Open UDP TURN ports in host firewall
@@ -146,17 +156,6 @@ jobs:
             echo 'No active UFW/firewalld found; verify the VPS and provider firewalls allow UDP 3478 and 49160-49200.'
           fi
           REMOTE
-
-      - name: Write deployment image tags on VPS
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          API_IMAGE: ghcr.io/${{ github.repository_owner }}/abavava-api:${{ github.sha }}
-          WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/abavava-web:${{ github.sha }}
-        run: |
-          printf 'ABV_API_IMAGE=%s\nABV_WEB_IMAGE=%s\n' "$API_IMAGE" "$WEB_IMAGE" \
-            | ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
-              'umask 077; cat > /opt/abavava/.deploy.env'
 
       - name: Log in to GHCR on VPS with job token
         env:
