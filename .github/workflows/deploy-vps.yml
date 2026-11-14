@@ -2,7 +2,7 @@ name: Build and deploy to VPS
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/turn-udp-test]
   workflow_dispatch:
 
 permissions:
@@ -77,6 +77,75 @@ jobs:
           scp -i ~/.ssh/id_ed25519 -o BatchMode=yes \
             compose.prod.yaml .env.production.example \
             "$VPS_USER@$VPS_HOST:/opt/abavava/"
+
+      - name: Initialize UDP TURN credentials on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/abavava
+          test -f .env.production
+          chmod 600 .env.production
+
+          domain="$(sed -n 's/^ABV_DOMAIN=//p' .env.production | tail -n 1)"
+          case "$domain" in
+            ''|*[!A-Za-z0-9.-]*) echo 'ABV_DOMAIN must be a hostname' >&2; exit 1 ;;
+          esac
+
+          username="$(sed -n 's/^ABV_TURN_USERNAME=//p' .env.production | tail -n 1)"
+          credential="$(sed -n 's/^ABV_TURN_CREDENTIAL=//p' .env.production | tail -n 1)"
+          if [ -z "$username" ]; then username="abv_$(openssl rand -hex 8)"; fi
+          if [ -z "$credential" ]; then credential="$(openssl rand -hex 32)"; fi
+
+          sed -i '/^ABV_TURN_URL=/d; /^ABV_TURN_USERNAME=/d; /^ABV_TURN_CREDENTIAL=/d' .env.production
+          printf '\nABV_TURN_URL=turn:%s:3478?transport=udp\nABV_TURN_USERNAME=%s\nABV_TURN_CREDENTIAL=%s\n' \
+            "$domain" "$username" "$credential" >> .env.production
+          chmod 600 .env.production
+          REMOTE
+
+      - name: Open UDP TURN ports in host firewall
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          firewall_configured=0
+          if command -v ufw >/dev/null 2>&1; then
+            if status="$(sudo -n ufw status 2>/dev/null)"; then
+              if printf '%s\n' "$status" | grep -q '^Status: active'; then
+                firewall_configured=1
+                if ! printf '%s\n' "$status" | grep -Fq '3478/udp'; then
+                  sudo -n ufw allow 3478/udp || firewall_configured=0
+                fi
+                if ! printf '%s\n' "$status" | grep -Fq '49160:49200/udp'; then
+                  sudo -n ufw allow 49160:49200/udp || firewall_configured=0
+                fi
+                if [ "$firewall_configured" -eq 1 ]; then
+                  echo 'Opened UDP 3478 and UDP 49160-49200 in UFW.'
+                else
+                  echo 'Could not open all TURN ports in UFW; check host firewall permissions.' >&2
+                fi
+              fi
+            fi
+          fi
+          if [ "$firewall_configured" -eq 0 ] && command -v firewall-cmd >/dev/null 2>&1 && sudo -n firewall-cmd --state >/dev/null 2>&1; then
+            firewall_configured=1
+            sudo -n firewall-cmd --permanent --query-port=3478/udp >/dev/null 2>&1 || sudo -n firewall-cmd --permanent --add-port=3478/udp || firewall_configured=0
+            sudo -n firewall-cmd --permanent --query-port=49160-49200/udp >/dev/null 2>&1 || sudo -n firewall-cmd --permanent --add-port=49160-49200/udp || firewall_configured=0
+            if [ "$firewall_configured" -eq 1 ]; then
+              sudo -n firewall-cmd --reload
+              echo 'Opened UDP 3478 and UDP 49160-49200 in firewalld.'
+            else
+              echo 'Could not open all TURN ports in firewalld; check host firewall permissions.' >&2
+            fi
+          fi
+          if [ "$firewall_configured" -eq 0 ]; then
+            echo 'No active UFW/firewalld found; verify the VPS and provider firewalls allow UDP 3478 and 49160-49200.'
+          fi
+          REMOTE
 
       - name: Write deployment image tags on VPS
         env:

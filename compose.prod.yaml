@@ -43,6 +43,30 @@ services:
       - "127.0.0.1:18082:8082"
     restart: unless-stopped
 
+  coturn:
+    image: coturn/coturn:4.18.0
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --no-tcp
+      - --no-tls
+      - --no-dtls
+      - --no-tcp-relay
+      - --lt-cred-mech
+      - --fingerprint
+      - --realm=${ABV_DOMAIN:?Set ABV_DOMAIN in .env.production}
+      - --user=${ABV_TURN_USERNAME:?Set ABV_TURN_USERNAME in .env.production}:${ABV_TURN_CREDENTIAL:?Set ABV_TURN_CREDENTIAL in .env.production}
+      - --min-port=49160
+      - --max-port=49200
+      - --user-quota=8
+      - --total-quota=64
+      - --no-cli
+      - --no-multicast-peers
+      - --no-loopback-peers
+    restart: unless-stopped
+
   web:
     image: ${ABV_WEB_IMAGE:?Set ABV_WEB_IMAGE in .deploy.env}
     ports:

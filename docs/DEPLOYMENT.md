@@ -163,7 +163,20 @@ docker compose --env-file .env.production --env-file .deploy.env \
 
 Android push включается отдельно: смонтируйте серверный Firebase service-account
 JSON и задайте `ABV_FCM_SERVICE_ACCOUNT_FILE` для API-сервиса в Compose. Не
-путайте его с Android `google-services.json`. Для звонков за строгим NAT задайте
-`ABV_TURN_URL`, `ABV_TURN_USERNAME` и `ABV_TURN_CREDENTIAL` в
-`.env.production`, затем пересоздайте API-контейнер. PostgreSQL не публикуется;
-порты `18080` и `18082` доступны только с loopback.
+путайте его с Android `google-services.json`.
+
+Coturn запускается в host network mode, чтобы корректно обслуживать ограниченный
+диапазон UDP relay-портов. Deploy workflow создает случайные TURN credentials,
+если они еще не заданы, и сохраняет их только в `/opt/abavava/.env.production`.
+TURN URL формируется как `turn:<ABV_DOMAIN>:3478?transport=udp`. Сервер слушает
+UDP 3478 и выдает relay-порты UDP 49160–49200; TCP, TLS и DTLS listener отключены.
+Workflow открывает эти порты в активном UFW или firewalld, если deploy-пользователю
+доступен `sudo -n`. Если у VPS есть отдельный firewall/security group в панели
+провайдера, там также должны быть разрешены входящие UDP 3478 и 49160–49200.
+
+Для проверки с Android откройте WebRTC Trickle ICE в браузере телефона, укажите
+TURN URL, username и credential, и убедитесь, что собирается кандидат типа
+`relay`. Затем проверьте реальный звонок через приложение. Доступность UDP 3478
+сама по себе еще не доказывает, что relay-диапазон открыт и медиа идет через TURN.
+
+PostgreSQL не публикуется; порты `18080` и `18082` доступны только с loopback.
