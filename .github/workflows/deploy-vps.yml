@@ -96,23 +96,51 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
-          cd /opt/abavava
-          test -r .env.production
-          test -w .deploy.env
+          deploy_user="$(id -un)"
+          if ! cd /opt/abavava; then
+            echo "ERROR: /opt/abavava is missing on the VPS or not accessible to $deploy_user." >&2
+            exit 1
+          fi
+          echo "Initializing TURN credentials in $(pwd) as $deploy_user."
+          ls -la 2>&1 || true
+
+          if [ ! -r .env.production ]; then
+            echo "ERROR: .env.production is missing or not readable by $deploy_user." >&2
+            echo "Create it from .env.production.example and chown it to $deploy_user (see docs/DEPLOYMENT.md)." >&2
+            exit 1
+          fi
+          if [ ! -e .deploy.env ]; then
+            : > .deploy.env
+          fi
+          if [ ! -w .deploy.env ]; then
+            echo "ERROR: .deploy.env is not writable by $deploy_user." >&2
+            echo "Remove it or chown it to $deploy_user so the workflow can store image tags and TURN credentials." >&2
+            exit 1
+          fi
 
           domain="$(sed -n 's/^ABV_DOMAIN=//p' .env.production | tr -d '\r' | tail -n 1)"
           case "$domain" in
-            ''|*[!A-Za-z0-9.-]*) echo 'ABV_DOMAIN must be a hostname' >&2; exit 1 ;;
+            ''|*[!A-Za-z0-9.-]*)
+              echo "ERROR: ABV_DOMAIN in .env.production must be a hostname, got '$domain'." >&2
+              exit 1
+              ;;
           esac
 
           username="$(sed -n 's/^ABV_TURN_USERNAME=//p' .deploy.env | tail -n 1)"
           credential="$(sed -n 's/^ABV_TURN_CREDENTIAL=//p' .deploy.env | tail -n 1)"
-          if [ -z "$username" ]; then username="abv_$(openssl rand -hex 8)"; fi
-          if [ -z "$credential" ]; then credential="$(openssl rand -hex 32)"; fi
+          if [ -z "$username" ]; then
+            username="abv_$(openssl rand -hex 8)"
+            echo 'Generated a new TURN username.'
+          fi
+          if [ -z "$credential" ]; then
+            credential="$(openssl rand -hex 32)"
+            echo 'Generated a new TURN credential.'
+          fi
 
           sed -i '/^ABV_TURN_URL=/d; /^ABV_TURN_USERNAME=/d; /^ABV_TURN_CREDENTIAL=/d' .deploy.env
           printf '\nABV_TURN_URL=turn:%s:3478?transport=udp\nABV_TURN_USERNAME=%s\nABV_TURN_CREDENTIAL=%s\n' \
             "$domain" "$username" "$credential" >> .deploy.env
+          echo "Wrote ABV_TURN_URL=turn:$domain:3478?transport=udp to .deploy.env."
           REMOTE
 
       - name: Open UDP TURN ports in host firewall
