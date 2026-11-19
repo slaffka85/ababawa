@@ -6,7 +6,6 @@ import com.abavava.chat.domain.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
@@ -61,18 +60,32 @@ public class UserRepository implements UserLookup {
         }
     }
 
-    /** Профиль и хеш пароля для входа; null, если пользователя нет. */
-    public record Account(User user, String passwordHash) {
+    /** Профиль, хеш пароля и признак подтверждения email; null, если пользователя нет. */
+    public record Account(User user, String passwordHash, boolean emailVerified) {
     }
 
     public Account accountByEmail(String login) {
-        record Row(User user, String hash) {
+        record Row(User user, String hash, boolean verified) {
         }
-        Optional<Row> row = jdbc.sql("SELECT " + USER_COLUMNS + ", password_hash FROM users WHERE lower(email) = lower(?)")
+        Optional<Row> row = jdbc.sql("SELECT " + USER_COLUMNS + ", password_hash, email_verified_at\n"
+                        + "FROM users WHERE lower(email) = lower(?)")
                 .param(login)
-                .query((rs, i) -> new Row(mapUser(rs), rs.getString("password_hash")))
+                .query((rs, i) -> new Row(mapUser(rs), rs.getString("password_hash"),
+                        rs.getObject("email_verified_at") != null))
                 .optional();
-        return row.map(r -> new Account(r.user(), r.hash())).orElse(null);
+        return row.map(r -> new Account(r.user(), r.hash(), r.verified())).orElse(null);
+    }
+
+    /** Отмечает адрес подтверждённым (идемпотентно) и возвращает профиль. */
+    public User markEmailVerified(UUID id) {
+        Optional<User> updated = jdbc.sql("UPDATE users\n"
+                        + "   SET email_verified_at = COALESCE(email_verified_at, now())\n"
+                        + " WHERE id = ?\n"
+                        + " RETURNING " + USER_COLUMNS)
+                .param(id)
+                .query(MAPPER)
+                .optional();
+        return updated.orElseThrow(() -> AbvException.notFound("user not found"));
     }
 
     /** Поиск по подстроке имени/email, исключая себя. */

@@ -119,3 +119,47 @@ abv:
   chat:
     max-group-members: 64
     max-title-length: 128
+
+  # Отправка писем (коды подтверждения email). Транспорт встроенный (SMTP по
+  # RFC 5321), без внешних зависимостей: подходит и Postfix на хосте, и
+  # внешний релей. Внутри docker-сети api ходит в Postfix по адресу
+  # host.docker.internal:25 (см. docs/DEPLOYMENT.md).
+  mail:
+    # false — письма не отправляются вообще (локальная разработка без SMTP).
+    enabled: true
+    host: 127.0.0.1
+    port: 25
+    username: ""
+    password: ""
+    # STARTTLS (обычно порт 587): true — TLS после EHLO, сертификат проверяется.
+    starttls: false
+    # Неявный TLS (обычно порт 465): true — шифрование с первого байта.
+    ssl: false
+    from: no-reply@abavava.local
+    from-name: abavava
+    support-email: support@abavava.local
+    # Публичный адрес приложения — из него собираются ссылки в письме.
+    app-url: http://localhost:5174
+    timeout: 10s
+
+  # Код подтверждения email: длина, срок жизни, лимиты.
+  email-verification:
+    code-length: 6
+    code-ttl: 15m
+    # Пауза между повторными отправками и потолок писем на аккаунт за окно.
+    resend-cooldown: 60s
+    max-resends: 5
+    resend-window: 1h
+    max-attempts: 5
+    # development: код возвращается в ответе API и пишется в лог, чтобы можно
+    # было тестировать регистрацию без работающего SMTP. В production
+    # игнорируется всегда (проверка в AbvProperties.echoVerificationCode()).
+    echo-code: true
+    # Ручная отправка кода: POST /api/v1/auth/send-code { "email": "..." }.
+    #   off — эндпоинт выключен (404);
+    #   dev — только при ABV_ENV!=production, без паузы и часового лимита:
+    #         проверить SMTP и пройти сценарий из REST-клиента;
+    #   on  — публичный режим с паузами и лимитами (письма на любой
+    #         неподтверждённый адрес; защита — rate-limit по IP).
+    # Переменная окружения: ABV_EMAILVERIFICATION_SENDCODE.
+    send-code: dev

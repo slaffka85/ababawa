@@ -14,13 +14,17 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.regex.Pattern;
+import java.util.Map;
 
 /**
- * Сценарии аутентификации: регистрация, вход, ротация refresh-токена,
- * выход из сессии. Семантика повторяет auth/service.go в Go-реализации.
+ * Сценарии аутентификации: регистрация, подтверждение email, вход, ротация
+ * refresh-токена, выход из сессии.
+ *
+ * <p>Регистрация больше не выдаёт токены: аккаунт создаётся неподтверждённым,
+ * на почту уходит код, а пара токенов появляется только после успешного
+ * {@code /auth/verify} (или обычного {@code /auth/login} подтверждённого
+ * аккаунта).
  */
-
 @Service
 @RequiredArgsConstructor
 public class AuthService {
@@ -29,16 +33,14 @@ public class AuthService {
 
     private static final int MIN_PASSWORD_LENGTH = 8;
     private static final int MAX_PASSWORD_LENGTH = 72;
-    private static final int MAX_EMAIL_LENGTH = 254;
+    private static final int MAX_LOGIN_LENGTH = 254;
     private static final int MAX_DISPLAY_NAME = 64;
-
-    private static final Pattern EMAIL_PATTERN =
-            Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
     private final UserRepository users;
     private final RefreshTokenRepository tokens;
     private final JwtService jwt;
     private final AbvProperties props;
+    private final EmailVerificationService verifications;
 
     public record SessionMeta(String userAgent, String ip) {
     }
@@ -52,19 +54,63 @@ public class AuthService {
     ) {
     }
 
+    /**
+     * Ответ на регистрацию: токенов нет, аккаунт ждёт ввода кода из письма.
+     * {@code devCode} заполняется только при включённом echo-code вне production.
+     */
+    public record RegisterPending(
+            @com.fasterxml.jackson.annotation.JsonProperty("verification_id") java.util.UUID verificationId,
+            @com.fasterxml.jackson.annotation.JsonProperty("email") String email,
+            @com.fasterxml.jackson.annotation.JsonProperty("expires_in") int expiresIn,
+            @com.fasterxml.jackson.annotation.JsonProperty("resend_in") int resendIn,
+            @com.fasterxml.jackson.annotation.JsonProperty("email_sent") boolean emailSent,
+            @com.fasterxml.jackson.annotation.JsonProperty("dev_code") String devCode
+    ) {
+    }
+
     public record RegisterInput(String email, String displayName, String password) {
     }
 
     public record LoginInput(String email, String password) {
     }
 
-    public AuthResult register(RegisterInput input, SessionMeta meta) {
-        String email = normalizeEmail(input.email());
+    public record VerifyInput(String email, String code) {
+    }
+
+    public RegisterPending register(RegisterInput input, SessionMeta meta) {
+        String email = Emails.normalize(input.email());
         String name = normalizeDisplayName(input.displayName());
         //validatePassword(input.password());
         String hash = Passwords.hash(input.password());
         User account = users.createAccount(email, name, hash);
+        EmailVerificationService.Issued issued = verifications.issue(account, meta.ip());
+        return new RegisterPending(
+                issued.verificationId(),
+                Emails.mask(email),
+                (int) issued.expiresIn().toSeconds(),
+                (int) issued.resendIn().toSeconds(),
+                issued.emailQueued(),
+                props.echoVerificationCode() ? issued.code() : null);
+    }
+
+    /** Проверка кода из письма: сразу выдаём пару токенов. */
+    public AuthResult verifyEmail(VerifyInput input, SessionMeta meta) {
+        User account = verifications.verify(input.email(), input.code());
         return issue(account, meta);
+    }
+
+    /** Повторная отправка кода (пауза и лимиты — в EmailVerificationService). */
+    public EmailVerificationService.Resent resendVerification(String email, String ip) {
+        return verifications.resend(email, ip);
+    }
+
+    /**
+     * Ручная отправка кода через REST: тот же код, что уходит при регистрации,
+     * но по явному вызову (dev-инструмент или публичный режим — см.
+     * abv.email-verification.send-code).
+     */
+    public EmailVerificationService.Resent sendVerificationCode(String email, String ip) {
+        return verifications.sendCode(email, ip);
     }
 
     public AuthResult login(LoginInput input, SessionMeta meta) {
@@ -76,6 +122,11 @@ public class AuthService {
         }
         if (!Passwords.matches(account.passwordHash(), input.password())) {
             throw AbvException.unauthorized("invalid email or password");
+        }
+        if (!account.emailVerified()) {
+            // Пароль верный, поэтому адрес можно не скрывать: клиент его и так знает.
+            throw new AbvException(AbvException.Code.FORBIDDEN, "email is not verified",
+                    Map.of("reason", "email_not_verified", "email", account.user().email()), null);
         }
         return issue(account.user(), meta);
     }
@@ -138,28 +189,10 @@ public class AuthService {
         if (login.isEmpty()) {
             throw AbvException.unauthorized("invalid email or password");
         }
-        if (login.length() > MAX_EMAIL_LENGTH) {
+        if (login.length() > MAX_LOGIN_LENGTH) {
             throw AbvException.unauthorized("invalid email or password");
         }
         return login;
-    }
-
-    private static String normalizeEmail(String raw) {
-        String email = raw == null ? "" : raw.trim().toLowerCase();
-        if (email.isEmpty()) {
-            throw AbvException.invalidField("email", "email is required");
-        }
-        if (email.length() > MAX_EMAIL_LENGTH) {
-            throw AbvException.invalidField("email", "email is too long");
-        }
-        if (!EMAIL_PATTERN.matcher(email).matches()) {
-            throw AbvException.invalidField("email", "email is invalid");
-        }
-        String domain = email.substring(email.indexOf('@') + 1);
-        if (!domain.contains(".")) {
-            throw AbvException.invalidField("email", "email domain is invalid");
-        }
-        return email;
     }
 
     private static String normalizeDisplayName(String raw) {

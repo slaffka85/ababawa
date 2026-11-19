@@ -89,11 +89,12 @@ public class SeedRunner implements ApplicationRunner {
     private DemoAccount upsert(DemoUser u) {
         UserRepository.Account existing = users.accountByEmail(u.email());
         if (existing != null) {
-            return new DemoAccount(existing.user(), false);
+            // Демо-аккаунты не проходят подтверждение email: код им не отправить.
+            return new DemoAccount(users.markEmailVerified(existing.user().id()), false);
         }
         String password = u.password() == null || u.password().isEmpty() ? DEFAULT_DEMO_PASSWORD : u.password();
         String hash = Passwords.hash(password);
         User created = users.createAccount(u.email(), u.displayName(), hash);
-        return new DemoAccount(created, true);
+        return new DemoAccount(users.markEmailVerified(created.id()), true);
     }
 }

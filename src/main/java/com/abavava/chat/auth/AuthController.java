@@ -10,7 +10,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.ObjectMapper;
 
-/** HTTP-эндпоинты аутентификации: /api/v1/auth/*. */
+/**
+ * HTTP-эндпоинты аутентификации: /api/v1/auth/*.
+ *
+ * <p>Регистрация двухшаговая: {@code /register} создаёт неподтверждённый
+ * аккаунт и отправляет код (202), {@code /verify} проверяет код и выдаёт
+ * токены (200). Пока адрес не подтверждён, {@code /login} отвечает 403
+ * {@code email_not_verified}.
+ */
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
@@ -37,16 +44,64 @@ public class AuthController {
             @JsonProperty("password") String password) {
     }
 
+    public record VerifyRequest(
+            @JsonProperty("email") String email,
+            @JsonProperty("code") String code) {
+    }
+
+    public record ResendRequest(
+            @JsonProperty("email") String email) {
+    }
+
+    public record ResendResponse(
+            @JsonProperty("resend_in") long resendIn,
+            @JsonProperty("expires_in") long expiresIn,
+            @JsonProperty("email_sent") boolean emailSent,
+            @JsonProperty("dev_code") String devCode) {
+    }
+
     public record RefreshRequest(
             @JsonProperty("refresh_token") String refreshToken) {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<AuthService.AuthResult> register(HttpServletRequest request) {
+    public ResponseEntity<AuthService.RegisterPending> register(HttpServletRequest request) {
         RegisterRequest body = JsonBody.required(request, RegisterRequest.class, mapper);
-        AuthService.AuthResult result = auth.register(
+        AuthService.RegisterPending result = auth.register(
                 new AuthService.RegisterInput(body.email(), body.displayName(), body.password()), meta(request));
-        return ResponseEntity.status(201).body(result);
+        return ResponseEntity.status(202).body(result);
+    }
+
+    @PostMapping("/verify")
+    public ResponseEntity<AuthService.AuthResult> verify(HttpServletRequest request) {
+        VerifyRequest body = JsonBody.required(request, VerifyRequest.class, mapper);
+        AuthService.AuthResult result = auth.verifyEmail(
+                new AuthService.VerifyInput(body.email(), body.code()), meta(request));
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/resend")
+    public ResponseEntity<ResendResponse> resend(HttpServletRequest request) {
+        ResendRequest body = JsonBody.required(request, ResendRequest.class, mapper);
+        EmailVerificationService.Resent result = auth.resendVerification(body.email(), clientIp(request));
+        return ResponseEntity.status(202).body(new ResendResponse(
+                result.resendIn().toSeconds(), result.expiresIn().toSeconds(), result.emailQueued(),
+                result.devCode()));
+    }
+
+    /**
+     * Ручная отправка кода на email (проверка SMTP, прогон сценария из
+     * REST-клиента). Работает только с существующим неподтверждённым аккаунтом:
+     * адреса нет или он уже подтверждён — 409. Режим и гейтинг — в
+     * abv.email-verification.send-code (по умолчанию `dev`, только вне production).
+     */
+    @PostMapping("/send-code")
+    public ResponseEntity<ResendResponse> sendCode(HttpServletRequest request) {
+        ResendRequest body = JsonBody.required(request, ResendRequest.class, mapper);
+        EmailVerificationService.Resent result = auth.sendVerificationCode(body.email(), clientIp(request));
+        return ResponseEntity.status(202).body(new ResendResponse(
+                result.resendIn().toSeconds(), result.expiresIn().toSeconds(), result.emailQueued(),
+                result.devCode()));
     }
 
     @PostMapping("/login")
@@ -70,9 +125,13 @@ public class AuthController {
     }
 
     private static AuthService.SessionMeta meta(HttpServletRequest request) {
-        String agent = request.getHeader("User-Agent");
-        String ip = com.abavava.chat.http.Httpx.clientIp(request);
-        return new AuthService.SessionMeta(truncate(agent, MAX_USER_AGENT), truncate(ip, MAX_IP));
+        return new AuthService.SessionMeta(
+                truncate(request.getHeader("User-Agent"), MAX_USER_AGENT),
+                truncate(clientIp(request), MAX_IP));
+    }
+
+    private static String clientIp(HttpServletRequest request) {
+        return truncate(com.abavava.chat.http.Httpx.clientIp(request), MAX_IP);
     }
 
     private static String truncate(String value, int max) {
