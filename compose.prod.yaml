@@ -8,6 +8,10 @@ services:
       POSTGRES_USER: abavava
       POSTGRES_PASSWORD: ${ABV_DATABASE_PASSWORD:?Set ABV_DATABASE_PASSWORD in .env.production}
       POSTGRES_INITDB_ARGS: --data-checksums
+    # Порт опубликован только на loopback: БД доступна с сервера и через
+    # SSH-туннель, но не из интернета (Docker публикует порты в обход UFW).
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
