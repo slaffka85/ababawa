@@ -20,6 +20,9 @@ services:
 
   api:
     image: ${ABV_API_IMAGE:?Set ABV_API_IMAGE in .deploy.env}
+    # Postfix живёт на хосте, api ходит в него как в host.docker.internal:25.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ABV_ENV: production
       ABV_HTTP_ADDR: 0.0.0.0:8082
@@ -34,6 +37,20 @@ services:
       ABV_TURN_URL: ${ABV_TURN_URL:-}
       ABV_TURN_USERNAME: ${ABV_TURN_USERNAME:-}
       ABV_TURN_CREDENTIAL: ${ABV_TURN_CREDENTIAL:-}
+      # Транзакционная почта (коды подтверждения). From и App URL обязательны:
+      # без них письмо уйдёт с локального домена и в ссылке будет localhost.
+      ABV_MAIL_ENABLED: ${ABV_MAIL_ENABLED:-true}
+      ABV_MAIL_HOST: ${ABV_MAIL_HOST:-host.docker.internal}
+      ABV_MAIL_PORT: ${ABV_MAIL_PORT:-25}
+      ABV_MAIL_USERNAME: ${ABV_MAIL_USERNAME:-}
+      ABV_MAIL_PASSWORD: ${ABV_MAIL_PASSWORD:-}
+      ABV_MAIL_STARTTLS: ${ABV_MAIL_STARTTLS:-false}
+      ABV_MAIL_SSL: ${ABV_MAIL_SSL:-false}
+      ABV_MAIL_FROM: ${ABV_MAIL_FROM:?Set ABV_MAIL_FROM in .env.production}
+      ABV_MAIL_SUPPORT_EMAIL: ${ABV_MAIL_SUPPORT_EMAIL:?Set ABV_MAIL_SUPPORT_EMAIL in .env.production}
+      ABV_MAIL_APP_URL: ${ABV_MAIL_APP_URL:?Set ABV_MAIL_APP_URL in .env.production}
+      # POST /auth/send-code: dev → в production выключен (404), on → публично.
+      ABV_EMAILVERIFICATION_SENDCODE: ${ABV_EMAILVERIFICATION_SENDCODE:-dev}
     depends_on:
       postgres:
         condition: service_healthy
