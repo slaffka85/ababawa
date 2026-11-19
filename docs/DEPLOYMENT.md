@@ -109,6 +109,158 @@ sudo systemctl reload nginx
    должен оставаться неизменным после создания volume, если вы отдельно не
    меняете пароль в PostgreSQL.
 
+   Для писем с кодом подтверждения адреса по умолчанию выводятся из
+   `ABV_DOMAIN` (deploy workflow пишет `no-reply@<домен>`, `support@<домен>` и
+   `https://<домен>` в `.deploy.env`). Переопределите их в `.env.production`,
+   если почтовый домен отличается:
+
+   ```dotenv
+   ABV_MAIL_FROM=no-reply@abavava.tssv85.com
+   ABV_MAIL_SUPPORT_EMAIL=support@abavava.tssv85.com
+   ABV_MAIL_APP_URL=https://abavava.tssv85.com
+   ```
+
+## Почта для подтверждения email
+
+Регистрация отправляет код через SMTP. Транспорт встроен в API (без внешних
+зависимостей), поэтому достаточно, чтобы контейнер `api` видел SMTP-сервер.
+По умолчанию это Postfix на хосте через `host.docker.internal:25` —
+`extra_hosts: host.docker.internal:host-gateway` уже прописан в
+`compose.prod.yaml`.
+
+### Postfix на хосте
+
+1. Установите Postfix (Internet Site, system mail name — домен из `ABV_DOMAIN`):
+
+   ```bash
+   sudo apt install -y postfix
+   sudo systemctl enable --now postfix
+   ```
+
+2. Разрешите приём писем из docker-сети, оставив релей закрытым:
+
+   ```bash
+   sudo postconf -e 'inet_interfaces = all'
+   sudo postconf -e 'mynetworks = 127.0.0.0/8 172.16.0.0/12'
+   sudo postconf -e 'smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination'
+   sudo postconf -e 'message_size_limit = 10240000'
+   sudo systemctl reload postfix
+   sudo ss -ltnp | grep ':25'
+   ```
+
+   `mynetworks` доверяет всей docker-сети: контейнер может отправить письмо от
+   любого отправителя, поэтому порт 25 не должен быть доступен из интернета.
+   Если нужен только docker-трафик:
+
+   ```bash
+   sudo ufw deny 25/tcp
+   sudo ufw allow from 172.16.0.0/12 to any port 25 proto tcp
+   ```
+
+3. Проверьте отправку с хоста:
+
+   ```bash
+   printf 'Subject: postfix test\n\nhello\n' | sudo sendmail -f no-reply@abavava.tssv85.com you@example.com
+   sudo tail -n 30 /var/log/mail.log
+   ```
+
+### DNS: SPF, DKIM, DMARC, rDNS
+
+Без аутентификации отправителя письма с кодом уходят в спам, а Gmail не
+показывает нативную карточку «Copy code». Нужны все три записи плюс PTR.
+
+1. SPF — разрешите IP сервера:
+
+   ```
+   abavava.tssv85.com.  TXT  "v=spf1 a:abavava.tssv85.com ip4:<VPS_IP> -all"
+   ```
+
+2. DKIM — сгенерируйте ключ и подключите OpenDKIM:
+
+   ```bash
+   sudo apt install -y opendkim opendkim-tools
+   sudo mkdir -p /etc/opendkim/keys/abavava.tssv85.com
+   cd /etc/opendkim/keys/abavava.tssv85.com
+   sudo opendkim-genkey -s mail -d abavava.tssv85.com
+   sudo chown opendkim:opendkim mail.private
+   sudo cat mail.txt          # готовая TXT-запись для DNS
+   ```
+
+   ```
+   mail._domainkey.abavava.tssv85.com.  TXT  "v=DKIM1; k=rsa; p=<публичный ключ>"
+   ```
+
+   В `/etc/opendkim.conf`: `Domain abavava.tssv85.com`, `Selector mail`, затем
+   `sudo systemctl enable --now opendkim` и в Postfix:
+
+   ```bash
+   sudo postconf -e 'milter_default_action = accept'
+   sudo postconf -e 'smtpd_milters = inet:localhost:12301'
+   sudo postconf -e 'non_smtpd_milters = inet:localhost:12301'
+   sudo systemctl reload postfix
+   ```
+
+3. DMARC:
+
+   ```
+   _dmarc.abavava.tssv85.com.  TXT  "v=DMARC1; p=quarantine; rua=mailto:postmaster@abavava.tssv85.com; adkim=s; aspf=s"
+   ```
+
+4. PTR (rDNS) — в панели провайдера VPS: `<VPS_IP> → abavava.tssv85.com`.
+   Без PTR Gmail и Microsoft режут письма.
+
+Проверка: отправьте письмо на адрес из `mail-tester.com` и убедитесь, что
+SPF/DKIM/DMARC «pass», и только потом тестируйте Gmail.
+
+### Внешний релей вместо своего Postfix
+
+Если провайдер блокирует 25 порт, задайте в `/opt/abavava/.env.production`:
+
+```dotenv
+ABV_MAIL_HOST=smtp.yandex.ru
+ABV_MAIL_PORT=465
+ABV_MAIL_USERNAME=no-reply@abavava.tssv85.com
+ABV_MAIL_PASSWORD=<пароль приложения>
+ABV_MAIL_SSL=true
+```
+
+Для 587 используйте `ABV_MAIL_STARTTLS=true`. Сертификат сервера проверяется
+всегда, самоподписанный не подойдёт.
+
+### Проверка
+
+```bash
+cd /opt/abavava
+docker compose --env-file .env.production --env-file .deploy.env -f compose.prod.yaml logs -f api | grep -i mail
+```
+
+При регистрации в логе появляется `mail accepted by host:port for a***@domain`,
+при ошибке — `mail delivery failed (...)` с ответом SMTP. В production код в
+логи не пишется никогда: в development (`ABV_ENV=development`) он виден и в
+логе, и в поле `dev_code` ответа `/auth/register`.
+
+### Отправка кода по REST
+
+Проверить доставку, не проходя регистрацию в интерфейсе:
+
+```bash
+curl -sS -X POST https://abavava.tssv85.com/api/v1/auth/send-code \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"anya@example.com"}'
+```
+
+Эндпоинт работает только с существующим неподтверждённым аккаунтом (иначе `409`)
+и по умолчанию в production **выключен** (`404`): `dev` действует лишь вне
+production. Чтобы открыть его публично, задайте в `.env.production`:
+
+```dotenv
+ABV_EMAILVERIFICATION_SENDCODE=on
+```
+
+Это публичный триггер писем на любой неподтверждённый адрес: единственное
+ограничение — rate-limit по IP (30 запросов в минуту) и пауза `resend-cooldown`
+на аккаунт. Включайте осознанно.
+
 ## GitHub Actions и деплой
 
 В репозитории откройте **Settings → Secrets and variables → Actions → New

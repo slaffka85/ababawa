@@ -62,18 +62,90 @@
 
 ## Auth
 
+Регистрация двухшаговая: аккаунт создаётся неподтверждённым, на почту уходит
+6-значный код (живёт 15 минут, писем не больше 5 в час), а пара токенов
+появляется только после `/auth/verify`. Письмо собирается шаблоном
+`mail/verification-code.html` (см. `docs/mail/EMAIL-TEMPLATE.md`).
+
 ### POST `/auth/register`
 ```json
 { "email": "a@b.c", "display_name": "Аня", "password": "secret123" }
 ```
-`201` → `{ "user": User, "access_token": "...", "refresh_token": "...", "expires_in": 900 }`
-Ошибки: `422` (пароль < 8 символов, email невалиден), `409` (email занят).
+`202` → аккаунт создан, письмо с кодом отправлено (токенов в ответе нет):
+```json
+{ "verification_id": "uuid",
+  "email": "a***@b.c",
+  "expires_in": 900,
+  "resend_in": 60,
+  "email_sent": true,
+  "dev_code": null }
+```
+- `email` — замаскированный адрес; `email_sent` — письмо принято к отправке
+  (`false`, если SMTP выключен или очередь переполнена);
+- `dev_code` заполняется **только** при `ABV_ENV=development`, в production
+  всегда `null`: код существует исключительно в письме.
+
+Ошибки: `422` (email/display_name невалидны), `409` (email занят).
+
+### POST `/auth/verify`
+```json
+{ "email": "a@b.c", "code": "483920" }
+```
+`200` → как у login: `{ "user": User, "access_token": "...", "refresh_token": "...", "expires_in": 900 }`.
+
+Ошибки (все с `details.field = "code"`):
+| HTTP | code | details | Когда |
+|---|---|---|---|
+| `422` | `validation_failed` | `attempts_left` | неверный код; на код даётся 5 попыток |
+| `422` | `validation_failed` | `reason: "expired"` | код истёк или не запрашивался |
+| `422` | `validation_failed` | `reason: "too_many_attempts"` | попытки исчерпаны, код погашен |
+| `409` | `conflict` | — | адрес уже подтверждён |
+
+### POST `/auth/resend`
+```json
+{ "email": "a@b.c" }
+```
+`202` → `{ "resend_in": 60, "expires_in": 900, "email_sent": true }`. Предыдущий
+код гасится: действующим остаётся только последний. В development в ответ
+добавляется `dev_code` с новым кодом.
+
+`429` `rate_limited` — слишком часто (`details: { "field": "email", "resend_in": 59 }`)
+или исчерпан лимит писем (`details: { "retry_in": 3600 }`).
+Для незарегистрированного адреса ответ такой же `202`, но письмо не уходит.
+
+### POST `/auth/send-code`
+```json
+{ "email": "a@b.c" }
+```
+Ручная отправка кода на почту — проверить SMTP и пройти сценарий, не заполняя
+форму и не дожидаясь паузы. Работает только с **существующим неподтверждённым**
+аккаунтом (сначала `/auth/register`):
+
+| HTTP | code | details | Когда |
+|---|---|---|---|
+| `202` | — | — | код отправлен: `{ "resend_in": 0, "expires_in": 900, "email_sent": true, "dev_code": "483920" }` |
+| `409` | `conflict` | `reason: "email_not_registered"` | такого адреса в базе нет |
+| `409` | `conflict` | `reason: "email_already_verified"` | адрес уже подтверждён |
+| `404` | `not_found` | — | эндпоинт выключен (`send-code: off` или `dev` в production) |
+
+Доступ задаётся `abv.email-verification.send-code`
+(`ABV_EMAILVERIFICATION_SENDCODE`):
+
+| значение | когда работает | пауза и лимит |
+|---|---|---|
+| `off` | никогда (`404`) | — |
+| `dev` (по умолчанию) | только при `ABV_ENV != production` | игнорируются |
+| `on` | всегда | `resend-cooldown` и `max-resends`, как у `/auth/resend` |
+
+Предыдущий код гасится: действующим остаётся последний отправленный.
 
 ### POST `/auth/login`
 ```json
 { "email": "a@b.c", "password": "secret123" }
 ```
-`200` → как у register. `401` при неверных данных (сообщение общее, без раскрытия).
+`200` → как у verify. `401` при неверных данных (сообщение общее, без раскрытия).
+`403` `forbidden` с `details: { "reason": "email_not_verified", "email": "a@b.c" }`,
+если пароль верный, но почта не подтверждена — клиент уводит на ввод кода.
 
 ### POST `/auth/refresh`
 ```json

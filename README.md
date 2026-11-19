@@ -135,7 +135,9 @@ src/main/java/com/abavava/chat/
              health/ready/status, чтение JSON-тела
   contract/  интерфейсы между модулями (Broadcaster, ChatCommands, CallCommands,
              UserLookup, RealtimeStats)
-  auth/      регистрация/вход/refresh/logout + refresh_tokens
+  auth/      регистрация → код на email → verify, вход/refresh/logout,
+             refresh_tokens, email_verifications
+  mail/      SMTP-клиент и шаблоны писем (без внешних зависимостей)
   user/      профили, поиск, last_seen
   chat/      диалоги, сообщения, прочтения, набор текста (команда A)
   call/      звонки: состояния, таймеры, история, ICE (команда B)
@@ -145,7 +147,8 @@ src/main/java/com/abavava/chat/
 ## Проверки
 
 - `build.ps1 check` — офлайн: компиляция + unit-тесты (JWT, bcrypt,
-  Origin/CORS).
+  Origin/CORS, коды подтверждения, MIME-письмо, SMTP-протокол против тестового
+  сервера).
 - `build.ps1 package` — исполняемый jar (первый запуск требует Maven Central:
   недостающие артефакты плагинов упаковки). В этом run'е упаковка проверена.
 - `build.ps1 smoke` — паритетный Go-смоук против Java-API: 15/15 проверок
