@@ -118,6 +118,27 @@ export interface AuthResponse {
   expires_in: number;
 }
 
+/** Ответ на регистрацию: аккаунт создан, но ждёт кода из письма (токенов нет). */
+export interface RegisterPendingResponse {
+  verification_id: UUID;
+  /** Замаскированный адрес: a***@example.com */
+  email: string;
+  expires_in: number;
+  resend_in: number;
+  /** Письмо принято к отправке (false — SMTP выключен или очередь переполнена). */
+  email_sent: boolean;
+  /** Только в development: код продублирован в ответе, в production всегда null. */
+  dev_code?: string | null;
+}
+
+export interface ResendResponse {
+  resend_in: number;
+  expires_in: number;
+  email_sent: boolean;
+  /** Только в development: новый код продублирован в ответе. */
+  dev_code?: string | null;
+}
+
 export interface UserEnvelope {
   user: User;
 }

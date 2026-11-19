@@ -20,6 +20,8 @@ import type {
   Message,
   MessageEnvelope,
   MessagePageResponse,
+  RegisterPendingResponse,
+  ResendResponse,
   TypingState,
   User,
   UserEnvelope,
@@ -70,6 +72,30 @@ export class ApiError extends Error {
 /** Человекочитаемые сообщения для типовых кодов контракта. */
 export function humanizeApiError(error: unknown): string {
   if (error instanceof ApiError) {
+    const details = error.details ?? {};
+    // Подтверждение email: сервер отдаёт машинные детали, текст собираем здесь.
+    if (details.field === 'code') {
+      if (details.reason === 'expired') return 'Срок действия кода истёк. Запросите новый код.';
+      if (details.reason === 'too_many_attempts') return 'Слишком много попыток. Запросите новый код.';
+      if (typeof details.attempts_left === 'number') {
+        return details.attempts_left > 0
+          ? `Неверный код. Осталось попыток: ${details.attempts_left}.`
+          : 'Неверный код. Запросите новый код.';
+      }
+      return 'Неверный код подтверждения';
+    }
+    if (details.reason === 'email_not_verified') {
+      return 'Подтвердите email — мы отправили на него код';
+    }
+    if (details.reason === 'email_already_verified') {
+      return 'Адрес уже подтверждён — войдите в аккаунт';
+    }
+    if (typeof details.resend_in === 'number') {
+      return `Письмо уже отправлено. Повторить можно через ${details.resend_in} с.`;
+    }
+    if (typeof details.retry_in === 'number') {
+      return 'Слишком много писем. Попробуйте позже.';
+    }
     switch (error.code) {
       case 'invalid_request':
         return error.message || 'Некорректный запрос';
@@ -373,8 +399,19 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 /* ------------------------------------------------------------------ */
 
 export const authApi = {
-  register(input: { email: string; display_name: string; password: string }): Promise<AuthResponse> {
-    return request<AuthResponse>('/auth/register', { method: 'POST', body: input, auth: false });
+  /** Создаёт аккаунт и просит сервер отправить код: токенов в ответе нет (202). */
+  register(input: { email: string; display_name: string; password: string }): Promise<RegisterPendingResponse> {
+    return request<RegisterPendingResponse>('/auth/register', { method: 'POST', body: input, auth: false });
+  },
+
+  /** Проверка кода из письма: единственный способ получить токены после регистрации. */
+  verify(input: { email: string; code: string }): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/verify', { method: 'POST', body: input, auth: false });
+  },
+
+  /** Повторная отправка кода; 429 приходит с details.resend_in. */
+  resend(email: string): Promise<ResendResponse> {
+    return request<ResendResponse>('/auth/resend', { method: 'POST', body: { email }, auth: false });
   },
 
   login(input: { email: string; password: string }): Promise<AuthResponse> {

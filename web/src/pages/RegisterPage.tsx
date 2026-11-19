@@ -48,7 +48,8 @@ export function RegisterPage() {
     setSubmitting(true);
     const ok = await register(email, displayName, password);
     setSubmitting(false);
-    if (ok) navigate('/', { replace: true });
+    // Аккаунт создан, но токенов ещё нет: код из письма вводится на /verify-email.
+    if (ok) navigate('/verify-email', { replace: true });
   };
 
   const resetError = (): void => {
@@ -59,18 +60,18 @@ export function RegisterPage() {
     <div className="auth">
       <form className="auth__card" onSubmit={handleSubmit} noValidate>
         <h1 className="auth__title">Регистрация</h1>
-        <p className="auth__subtitle">Создайте аккаунт chat-abavava</p>
+        <p className="auth__subtitle">Создайте аккаунт abavava</p>
 
         {error ? <p className="auth__error">{error}</p> : null}
 
         <label className="field">
-          <span className="field__label">Имя</span>
+          <span className="field__label">Login</span>
           <input
             className={`field__input${fieldErrors.displayName ? ' field__input--invalid' : ''}`}
             type="text"
             value={displayName}
             autoComplete="nickname"
-            placeholder="Аня"
+            placeholder="login"
             onChange={(event) => {
               setDisplayName(event.target.value);
               resetError();

@@ -12,8 +12,23 @@ import {
 } from '../lib/api';
 import type { User } from '../lib/types';
 import { syncPushToken } from '../lib/push';
+import { clearPending, savePending } from '../lib/pending';
 
 export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'anonymous';
+
+/** Итог входа: пароль верный, но адрес не подтверждён — нужен код из письма. */
+export type LoginOutcome = 'ok' | 'unverified' | 'error';
+
+export interface ResendOutcome {
+  ok: boolean;
+  /** Через сколько секунд можно повторить (0 — сразу). */
+  resendIn: number;
+  /** Срок жизни нового кода в секундах. */
+  expiresIn: number;
+  /** Код, продублированный сервером в development (иначе null). */
+  devCode: string | null;
+  message: string | null;
+}
 
 interface AuthState {
   user: User | null;
@@ -21,8 +36,11 @@ interface AuthState {
   error: string | null;
   /** Восстановление сессии при загрузке: /me по сохранённым токенам. */
   bootstrap: () => Promise<void>;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<LoginOutcome>;
   register: (email: string, displayName: string, password: string) => Promise<boolean>;
+  /** Подтверждение кода из письма: единственный путь к токенам после register. */
+  verifyEmail: (email: string, code: string) => Promise<boolean>;
+  resendCode: (email: string) => Promise<ResendOutcome>;
   logout: () => Promise<void>;
   patchMe: (patch: { display_name?: string; avatar_url?: string | null }) => Promise<void>;
   setUser: (user: User) => void;
@@ -68,10 +86,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       setTokens(response.access_token, response.refresh_token, response.expires_in);
       set({ user: response.user, status: 'authenticated', error: null });
       void syncPushToken();
-      return true;
+      return 'ok';
     } catch (error) {
       set({ error: humanizeApiError(error) });
-      return false;
+      const details = error instanceof ApiError ? error.details ?? {} : {};
+      return details.reason === 'email_not_verified' ? 'unverified' : 'error';
     }
   },
 
@@ -83,13 +102,49 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         display_name: displayName.trim(),
         password,
       });
+      // Токенов нет: аккаунт ждёт код из письма, адрес запоминаем для /verify-email.
+      savePending({
+        email: email.trim().toLowerCase(),
+        resendIn: response.resend_in,
+        expiresIn: response.expires_in,
+        devCode: response.dev_code ?? null,
+      });
+      return true;
+    } catch (error) {
+      set({ error: humanizeApiError(error) });
+      return false;
+    }
+  },
+
+  verifyEmail: async (email, code) => {
+    set({ error: null });
+    try {
+      const response = await api.auth.verify({ email: email.trim(), code });
       setTokens(response.access_token, response.refresh_token, response.expires_in);
       set({ user: response.user, status: 'authenticated', error: null });
+      clearPending();
       void syncPushToken();
       return true;
     } catch (error) {
       set({ error: humanizeApiError(error) });
       return false;
+    }
+  },
+
+  resendCode: async (email) => {
+    try {
+      const response = await api.auth.resend(email.trim());
+      return {
+        ok: true,
+        resendIn: response.resend_in,
+        expiresIn: response.expires_in,
+        devCode: response.dev_code ?? null,
+        message: null,
+      };
+    } catch (error) {
+      const details = error instanceof ApiError ? error.details ?? {} : {};
+      const resendIn = typeof details.resend_in === 'number' ? details.resend_in : 0;
+      return { ok: false, resendIn, expiresIn: 0, devCode: null, message: humanizeApiError(error) };
     }
   },
 

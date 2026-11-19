@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { IconSpinner } from '../components/Icons';
+import { savePending } from '../lib/pending';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -34,9 +35,19 @@ export function LoginPage() {
     if (Object.keys(nextErrors).length > 0) return;
 
     setSubmitting(true);
-    const ok = await login(email, password);
+    const outcome = await login(email, password);
     setSubmitting(false);
-    if (ok) navigate('/', { replace: true });
+    if (outcome === 'ok') {
+      navigate('/', { replace: true });
+      return;
+    }
+    if (outcome === 'unverified') {
+      // Пароль верный, но адрес не подтверждён: уводим на ввод кода из письма.
+      clearError();
+      const pending = { email: email.trim().toLowerCase(), resendIn: 0, expiresIn: 0 };
+      savePending(pending);
+      navigate('/verify-email', { replace: true, state: pending });
+    }
   };
 
   return (
