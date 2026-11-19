@@ -123,6 +123,20 @@ public class EmailVerificationService {
      * часового лимита (проверка SMTP из REST-клиента), {@code on} — публичный
      * режим с теми же паузами и лимитами, что у {@code /auth/resend}.
      */
+    /**
+     * Ручная отправка кода через REST: {@code POST /auth/send-code}.
+     *
+     * <p>Работает только с существующим аккаунтом: адреса нет — 409
+     * {@code email_not_registered} (тот, кто зовёт эндпоинт вручную, и так знает
+     * адрес). Подтверждённый адрес письмо тоже получает — это ручной инструмент
+     * проверки доставки; код из такого письма не пройдёт {@code /auth/verify}
+     * (адрес уже подтверждён), но письмо и его оформление проверить можно.
+     *
+     * <p>Режим задаётся {@code abv.email-verification.send-code}: {@code off} —
+     * 404, {@code dev} — только вне production, без паузы и часового лимита
+     * (проверка SMTP из REST-клиента), {@code on} — публичный режим с теми же
+     * паузами и лимитами, что у {@code /auth/resend}.
+     */
     public Resent sendCode(String rawEmail, String ip) {
         AbvProperties.EmailVerification config = props.emailVerification();
         boolean development = isDevelopmentTool(config);
@@ -137,7 +151,7 @@ public class EmailVerificationService {
                     Map.of("field", "email", "reason", "email_not_registered"), null);
         }
         if (account.emailVerified()) {
-            throw alreadyVerified();
+            log.info("manual mail requested for already verified user_id={}", account.user().id());
         }
 
         if (development) {

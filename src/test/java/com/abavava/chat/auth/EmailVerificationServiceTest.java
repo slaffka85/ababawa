@@ -172,16 +172,16 @@ class EmailVerificationServiceTest {
     }
 
     @Test
-    void manualSendRefusesConfirmedAddress() {
+    void manualSendWorksForConfirmedAddress() {
+        // Ручной инструмент проверки доставки: подтверждённый адрес тоже получает
+        // письмо, хотя код из него не пройдёт verify (адрес уже подтверждён).
         users.account = new UserRepository.Account(user(), "$2a$12$hash", true);
 
-        assertThatThrownBy(() -> service.sendCode(EMAIL, "127.0.0.1"))
-                .isInstanceOf(AbvException.class)
-                .satisfies(error -> {
-                    AbvException e = (AbvException) error;
-                    assertThat(e.code()).isEqualTo(AbvException.Code.CONFLICT);
-                    assertThat(e.details()).containsEntry("reason", "email_already_verified");
-                });
+        EmailVerificationService.Resent resent = service.sendCode(EMAIL, "127.0.0.1");
+
+        assertThat(resent.emailQueued()).isTrue();
+        assertThat(mailer.calls).isEqualTo(1);
+        assertThat(mailer.lastCode).matches("\\d{6}");
     }
 
     @Test
