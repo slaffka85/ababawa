@@ -264,6 +264,32 @@ ABV_EMAILVERIFICATION_SENDCODE=on
 ограничение — rate-limit по IP (30 запросов в минуту) и пауза `resend-cooldown`
 на аккаунт. Включайте осознанно.
 
+### Временный тест почты (удалить после настройки)
+
+Пока подбираются `ABV_MAIL_*`, удобнее дергать ручку, которой не нужен аккаунт:
+она генерирует код и синхронно отправляет письмо на любой адрес, возвращая
+результат SMTP:
+
+```bash
+curl -sS -X POST https://abavava.tssv85.com/api/v1/mail/test \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com"}'
+```
+
+Успех — `{"email":"...","code":"483920","sent":true}`. Если SMTP не отвечает или
+письмо отклонено, ответ тот же, но с причиной:
+
+```json
+{"email":"you@example.com","code":"483920","sent":false,
+ "error":"java.net.ConnectException: Connection refused"}
+```
+
+В production ручка по умолчанию **выключена** (`404`): откройте её на время
+настройки тем же `ABV_EMAILVERIFICATION_SENDCODE=on`, что и ручную отправку кода.
+Код в ответе не сохраняется в БД — `/auth/verify` его не примет. После настройки
+почты удалите `MailTestController`, `/api/v1/mail/` из `AccessTokenFilter` и
+`/api/v1/mail/*` из `WebFilterConfig` и верните `ABV_EMAILVERIFICATION_SENDCODE=dev`.
+
 ## GitHub Actions и деплой
 
 В репозитории откройте **Settings → Secrets and variables → Actions → New

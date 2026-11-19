@@ -171,6 +171,40 @@
 ```
 `200` → `{ "user": User }`
 
+## Почта (временный тест)
+
+### POST `/mail/test`
+
+Ручка для настройки SMTP: генерирует код и **синхронно** отправляет письмо
+подтверждения на любой адрес, в ответе — результат SMTP-сеанса. Аккаунт не
+нужен; код не сохраняется в БД, поэтому `/auth/verify` его не примет (для
+настоящего сценария — `/auth/register`).
+
+```json
+{ "email": "you@example.com" }
+```
+`200`:
+```json
+{ "email": "you@example.com", "code": "483920", "sent": true }
+```
+`200`, если SMTP недоступен или письмо отклонено ({`error` — исключение
+транспорта, `code` сгенерирован, но письмо не ушло):
+```json
+{ "email": "you@example.com", "code": "483920", "sent": false,
+  "error": "java.net.ConnectException: Connection refused" }
+```
+`422` `validation_failed` — пустой или невалидный `email`. `404` — ручка
+выключена. HTTP-код всегда `200`, когда запрос дошёл до отправки: результат
+разбирается по `sent`/`error`, а не по статусу.
+
+Доступ повторяет режим ручной отправки кода (`abv.email-verification.send-code`,
+`ABV_EMAILVERIFICATION_SENDCODE`): `off` — `404`, `dev` (по умолчанию) — только
+при `ABV_ENV != production`, `on` — всегда. В публичном режиме запросы
+ограничены общим rate-limit (30 в минуту на IP).
+
+**Временная ручка:** после настройки почты удалите `MailTestController`,
+`/api/v1/mail/` в `AccessTokenFilter` и `/api/v1/mail/*` в `WebFilterConfig`.
+
 ## Пользователи
 
 | Метод | Путь | Описание |

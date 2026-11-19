@@ -28,6 +28,14 @@ public class VerificationMailer {
 
     /** @return true, если письмо принято к отправке (не «доставлено»). */
     public boolean sendCode(String email, String code) {
+        return sender.send(compose(email, code));
+    }
+
+    /**
+     * То же письмо, что уходит при регистрации, но без очереди: временный
+     * {@code MailTestController} отправляет его синхронно и возвращает результат.
+     */
+    public MailMessage compose(String email, String code) {
         AbvProperties.Mail mail = props.mail();
         int expiresMinutes = (int) Math.max(1L, props.emailVerification().codeTtl().toMinutes());
         String appUrl = withoutTrailingSlash(mail.appUrl());
@@ -36,7 +44,7 @@ public class VerificationMailer {
 
         MailTemplates.VerificationMail rendered = templates.verificationCode(
                 code, expiresMinutes, copyUrl, appUrl, mail.supportEmail(), email, year);
-        return sender.send(new MailMessage(email, rendered.subject(), rendered.text(), rendered.html()));
+        return new MailMessage(email, rendered.subject(), rendered.text(), rendered.html());
     }
 
     private static String withoutTrailingSlash(String url) {

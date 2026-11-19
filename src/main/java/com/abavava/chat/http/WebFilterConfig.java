@@ -34,7 +34,9 @@ public class WebFilterConfig {
     public FilterRegistrationBean<AuthRateLimitFilter> authRateLimitFilter(AbvProperties props, ObjectMapper mapper) {
         FilterRegistrationBean<AuthRateLimitFilter> bean =
                 new FilterRegistrationBean<>(new AuthRateLimitFilter(props, mapper));
-        bean.addUrlPatterns("/api/v1/auth/*");
+        // /api/v1/mail/* — временный тест почты: шлёт письмо на любой адрес,
+        // поэтому ограничен тем же окном, что и /auth/*.
+        bean.addUrlPatterns("/api/v1/auth/*", "/api/v1/mail/*");
         bean.setOrder(30);
         return bean;
     }
