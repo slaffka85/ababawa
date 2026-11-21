@@ -118,13 +118,11 @@ jobs:
           # ABV_DOMAIN, но значения из .env.production имеют приоритет.
           mail_from="$(sed -n 's/^ABV_MAIL_FROM=//p' .env.production | tr -d '\r' | tail -n 1)"
           mail_support="$(sed -n 's/^ABV_MAIL_SUPPORT_EMAIL=//p' .env.production | tr -d '\r' | tail -n 1)"
-          mail_app_url="$(sed -n 's/^ABV_MAIL_APP_URL=//p' .env.production | tr -d '\r' | tail -n 1)"
           if [ -z "$mail_from" ]; then mail_from="no-reply@$domain"; fi
           if [ -z "$mail_support" ]; then mail_support="support@$domain"; fi
-          if [ -z "$mail_app_url" ]; then mail_app_url="https://$domain"; fi
           sed -i '/^ABV_MAIL_FROM=/d; /^ABV_MAIL_SUPPORT_EMAIL=/d; /^ABV_MAIL_APP_URL=/d' .deploy.env
-          printf 'ABV_MAIL_FROM=%s\nABV_MAIL_SUPPORT_EMAIL=%s\nABV_MAIL_APP_URL=%s\n' \
-            "$mail_from" "$mail_support" "$mail_app_url" >> .deploy.env
+          printf 'ABV_MAIL_FROM=%s\nABV_MAIL_SUPPORT_EMAIL=%s\n' \
+            "$mail_from" "$mail_support" >> .deploy.env
           REMOTE
 
       - name: Open UDP TURN ports in host firewall

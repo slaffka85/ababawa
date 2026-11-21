@@ -3,15 +3,13 @@ package com.abavava.chat.mail;
 import com.abavava.chat.config.AbvProperties;
 import org.springframework.stereotype.Component;
 
-import java.time.Year;
-import java.time.ZoneOffset;
-
 /**
- * Письмо с кодом подтверждения: собирает ссылки и данные шаблона.
+ * Письмо с кодом подтверждения: подставляет код, срок действия и адрес
+ * поддержки в шаблоны из classpath.
  *
- * <p>Ссылка «Copy code» несёт код во фрагменте (`#c=123456`): фрагмент не
- * уходит на сервер и не попадает в access-логи nginx, а страница
- * `/verify-email` кладёт код в буфер обмена.
+ * <p>Ссылок в письме нет намеренно: клик по письму не должен уводить на сайт,
+ * а код получатель вводит в приложении. Один тап для копирования даёт нативная
+ * пилюля «Copy code» в Gmail — письму для этого ничего не нужно.
  */
 @Component
 public class VerificationMailer {
@@ -34,24 +32,19 @@ public class VerificationMailer {
     /**
      * То же письмо, что уходит при регистрации, но без очереди: временный
      * {@code MailTestController} отправляет его синхронно и возвращает результат.
+     *
+     * <p>Письмо — без ссылок: единственное действие получателя — прочитать код и
+     * ввести его в приложении. Копирование в один тап дают почтовые клиенты
+     * (пилюля «Copy code» в Gmail, автозаполнение в Apple Mail), а не письмо:
+     * HTML-письма не исполняют JS, поэтому собственная кнопка «копировать»
+     * могла бы только переходить по ссылке.
      */
     public MailMessage compose(String email, String code) {
         AbvProperties.Mail mail = props.mail();
         int expiresMinutes = (int) Math.max(1L, props.emailVerification().codeTtl().toMinutes());
-        String appUrl = withoutTrailingSlash(mail.appUrl());
-        String copyUrl = appUrl + "/verify-email#c=" + code;
-        int year = Year.now(ZoneOffset.UTC).getValue();
 
         MailTemplates.VerificationMail rendered = templates.verificationCode(
-                code, expiresMinutes, copyUrl, appUrl, mail.supportEmail(), email, year);
+                code, expiresMinutes, mail.supportEmail(), email);
         return new MailMessage(email, rendered.subject(), rendered.text(), rendered.html());
-    }
-
-    private static String withoutTrailingSlash(String url) {
-        String value = url == null ? "" : url.trim();
-        while (value.endsWith("/")) {
-            value = value.substring(0, value.length() - 1);
-        }
-        return value;
     }
 }

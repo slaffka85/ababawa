@@ -1,23 +1,16 @@
-abavava
+Please verify your email address.
 
-Verify your email
+Here is your Ababawa email verification code: {{code}}
+This code is valid for {{expires_minutes}} minutes and can only be used once.
 
-Your verification code is:
+Please don't share this code with anyone: we'll never ask for it on the phone or via email.
 
-{{code}}
+If you didn't request this code, you can safely ignore this email.
 
-Use the code above to finish creating your abavava account.
-This code expires in {{expires_minutes}} minutes.
-
-Copy the code (opens abavava and puts the code on your clipboard):
-{{copy_url}}
-
-Didn't request this code? You can safely ignore this email.
-Someone may have typed your email address by mistake.
+Thanks,
+The Ababawa Team
 
 --
-abavava - Secure messenger with calls
-{{app_url}}
-
-This is an automated message. Need help? {{support_email}}
-Sent to {{recipient_email}} - Copyright {{year}} abavava
+Ababawa - Secure messenger with calls
+Need help? {{support_email}}
+Sent to {{recipient_email}}

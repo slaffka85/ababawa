@@ -81,7 +81,6 @@ public record AbvProperties(
             String from,
             String fromName,
             String supportEmail,
-            String appUrl,
             Duration timeout) {
     }
 
@@ -180,9 +179,6 @@ public record AbvProperties(
         }
         if (!looksLikeEmail(mail.from())) {
             throw new IllegalStateException("ABV_MAIL_FROM must be a valid email address");
-        }
-        if (mail.appUrl() == null || mail.appUrl().isBlank()) {
-            throw new IllegalStateException("ABV_MAIL_APP_URL must be set when abv.mail.enabled=true");
         }
         requirePositive("MAIL_PORT", mail.port());
         requirePositive("MAIL_TIMEOUT", mail.timeout());

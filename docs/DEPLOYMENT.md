@@ -111,14 +111,13 @@ sudo systemctl reload nginx
    меняете пароль в PostgreSQL.
 
    Для писем с кодом подтверждения адреса по умолчанию выводятся из
-   `ABV_DOMAIN` (deploy workflow пишет `no-reply@<домен>`, `support@<домен>` и
-   `https://<домен>` в `.deploy.env`). Переопределите их в `.env.production`,
-   если почтовый домен отличается:
+   `ABV_DOMAIN` (deploy workflow пишет `no-reply@<домен>` и `support@<домен>` в
+   `.deploy.env`). Переопределите их в `.env.production`, если почтовый домен
+   отличается:
 
    ```dotenv
    ABV_MAIL_FROM=no-reply@abavava.tssv85.com
    ABV_MAIL_SUPPORT_EMAIL=support@abavava.tssv85.com
-   ABV_MAIL_APP_URL=https://abavava.tssv85.com
    ```
 
 ## Почта для подтверждения email
@@ -208,10 +207,43 @@ sudo systemctl reload nginx
    ```
 
 4. PTR (rDNS) — в панели провайдера VPS: `<VPS_IP> → abavava.tssv85.com`.
-   Без PTR Gmail и Microsoft режут письма.
+   Без PTR Gmail и Microsoft режут письма. Имя из PTR должно совпадать с
+   баннером SMTP (`220 <имя> ESMTP Postfix`): его задаёт `myhostname` в
+   Postfix, а проверяющие сверяют PTR и A в обе стороны (FCrDNS).
+
+5. Поддомен **не наследует** записи родителя. SPF и DKIM ищутся ровно по
+   домену из `From` — если письмо уходит с `no-reply@abavava.tssv85.com`, то
+   записи, сделанные для `tssv85.com`, его не аутентифицируют. DMARC —
+   исключение: без своей записи проверяющий возьмёт политику организационного
+   домена (`_dmarc.tssv85.com`), но `pass` от этого не появится. После смены
+   `ABV_MAIL_FROM` проверьте домен именно из него:
+
+   ```bash
+   dig +short TXT abavava.tssv85.com                   # v=spf1 ... -all
+   dig +short TXT mail._domainkey.abavava.tssv85.com   # v=DKIM1; ...
+   dig +short TXT _dmarc.abavava.tssv85.com            # v=DMARC1; p=none; ...
+   ```
+
+   Если ключ уже выпущен для `tssv85.com`, тот же публичный ключ можно
+   опубликовать и на поддомене; в `/etc/opendkim/KeyTable` тогда добавляется
+   строка `mail._domainkey.abavava.tssv85.com abavava.tssv85.com:mail:/путь/к/mail.private`,
+   а в `SigningTable` — `*@abavava.tssv85.com mail._domainkey.abavava.tssv85.com`.
+   Проверка перед отправкой: `opendkim-testkey -d abavava.tssv85.com -s mail -vvv`
+   (должно быть `key OK`).
 
 Проверка: отправьте письмо на адрес из `mail-tester.com` и убедитесь, что
-SPF/DKIM/DMARC «pass», и только потом тестируйте Gmail.
+SPF/DKIM/DMARC «pass», и только потом тестируйте Gmail. У аутентифицированного
+письма в Gmail «Show original» те же три строки, что у писем GitHub:
+
+```
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@abavava.tssv85.com header.s=mail;
+       spf=pass (...) smtp.mailfrom=no-reply@abavava.tssv85.com;
+       dmarc=pass (p=NONE) header.from=abavava.tssv85.com
+```
+
+`spf=none` и `dkim=none` означают, что записей нет по домену из `From` (пункт
+5), `dkim=fail` — что подпись есть, но ключ в DNS не тот, которым подписывали.
 
 ### Внешний релей вместо своего Postfix
 

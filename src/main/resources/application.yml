@@ -136,10 +136,8 @@ abv:
     # Неявный TLS (обычно порт 465): true — шифрование с первого байта.
     ssl: false
     from: no-reply@abavava.local
-    from-name: abavava
+    from-name: Ababawa
     support-email: support@abavava.local
-    # Публичный адрес приложения — из него собираются ссылки в письме.
-    app-url: http://localhost:5174
     timeout: 10s
 
   # Код подтверждения email: длина, срок жизни, лимиты.

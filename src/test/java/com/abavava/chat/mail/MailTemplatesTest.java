@@ -13,18 +13,25 @@ class MailTemplatesTest {
     void rendersVerificationMailForHumansAndParsers() {
         MailTemplates.VerificationMail mail = render("483920", "user@example.com");
 
-        assertThat(mail.subject()).isEqualTo("abavava verification code: 483920");
+        assertThat(mail.subject()).isEqualTo("[Ababawa] email verification code");
         assertThat(mail.text())
-                .contains("Your verification code is:")
-                .contains("\n483920\n");
-        assertThat(mail.html()).contains("Your verification code is:");
-        // Код есть и в блоке кода, и в ссылке «Copy code» — ровно два вхождения.
-        assertThat(countOccurrences(mail.html(), "483920")).isEqualTo(2);
-        // Единый текстовый токен, а не разбивка по ячейкам.
-        assertThat(mail.html()).containsPattern("<span class=\"code\"[^>]*>483920</span>");
+                .contains("Here is your Ababawa email verification code: 483920")
+                .contains("valid for 15 minutes");
+        assertThat(mail.html()).contains("Please verify your email address");
+        // Код — один раз и отдельным текстовым токеном: никаких дублей в ссылках.
+        assertThat(countOccurrences(mail.html(), "483920")).isEqualTo(1);
+        assertThat(mail.html()).contains(">483920</td>");
         assertThat(mail.html()).doesNotContain("{{").doesNotContain("}}");
         assertThat(mail.text()).doesNotContain("{{").doesNotContain("}}");
-        assertThat(mail.html()).contains("abavava verification code");
+    }
+
+    @Test
+    void letterHasNoLinksAtAll() {
+        MailTemplates.VerificationMail mail = render("483920", "user@example.com");
+
+        // Клик по письму не должен никуда вести: ни кнопок, ни якорей, ни URL.
+        assertThat(mail.html()).doesNotContain("<a ").doesNotContain("href");
+        assertThat(mail.text()).doesNotContain("http://").doesNotContain("https://");
     }
 
     @Test
@@ -37,14 +44,7 @@ class MailTemplatesTest {
     }
 
     private MailTemplates.VerificationMail render(String code, String recipient) {
-        return templates.verificationCode(
-                code,
-                15,
-                "https://abavava.tssv85.com/verify-email#c=" + code,
-                "https://abavava.tssv85.com",
-                "support@abavava.tssv85.com",
-                recipient,
-                2026);
+        return templates.verificationCode(code, 15, "support@abavava.tssv85.com", recipient);
     }
 
     private static int countOccurrences(String haystack, String needle) {

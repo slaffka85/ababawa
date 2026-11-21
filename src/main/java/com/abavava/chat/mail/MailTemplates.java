@@ -35,22 +35,19 @@ public class MailTemplates {
     public record VerificationMail(String subject, String text, String html) {
     }
 
-    public VerificationMail verificationCode(String code, int expiresMinutes, String copyUrl, String appUrl,
-                                             String supportEmail, String recipientEmail, int year) {
+    public VerificationMail verificationCode(String code, int expiresMinutes,
+                                             String supportEmail, String recipientEmail) {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("code", code);
         values.put("expires_minutes", Integer.toString(expiresMinutes));
-        values.put("copy_url", copyUrl);
-        values.put("app_url", appUrl);
         values.put("support_email", supportEmail);
         values.put("recipient_email", recipientEmail);
-        values.put("year", Integer.toString(year));
 
         String text = render(textTemplate, values);
         String html = render(htmlTemplate, escape(values));
-        // Тема держит код рядом с триггер-фразой: её читают и люди, и парсеры
-        // Gmail/Apple Mail (см. docs/mail/EMAIL-TEMPLATE.md).
-        return new VerificationMail("abavava verification code: " + code, text, html);
+        // Тема по образцу писем GitHub: бренд в скобках и название действия.
+        // Кода в теме нет — он виден и на локскрине; код живёт в теле письма.
+        return new VerificationMail("[Ababawa] email verification code", text, html);
     }
 
     private static String render(String template, Map<String, String> values) {
