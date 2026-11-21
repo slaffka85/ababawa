@@ -15,12 +15,15 @@ class MailTemplatesTest {
 
         assertThat(mail.subject()).isEqualTo("[Ababawa] email verification code");
         assertThat(mail.text())
-                .contains("Here is your Ababawa email verification code: 483920")
+                .contains("Here is your Ababawa email verification code:")
+                .contains("\n483920\n")
                 .contains("valid for 15 minutes");
         assertThat(mail.html()).contains("Please verify your email address");
-        // Код — один раз и отдельным текстовым токеном: никаких дублей в ссылках.
-        assertThat(countOccurrences(mail.html(), "483920")).isEqualTo(1);
-        assertThat(mail.html()).contains(">483920</td>");
+        // Видимый код — единый текстовый токен, не разбитый по ячейкам.
+        assertThat(mail.html()).contains(">483920</span>");
+        // Второе вхождение — служебная строка автозаполнения в футере, не ссылка.
+        assertThat(countOccurrences(mail.html(), "483920")).isEqualTo(2);
+        assertThat(mail.html()).contains("#483920");
         assertThat(mail.html()).doesNotContain("{{").doesNotContain("}}");
         assertThat(mail.text()).doesNotContain("{{").doesNotContain("}}");
     }
