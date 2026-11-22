@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { CodeInput } from '../components/auth/CodeInput';
 import { IconSpinner } from '../components/Icons';
 import { useAuthStore } from '../store/auth';
+import { readRememberedEmail } from '../lib/api';
 import { toast } from '../store/toast';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -24,7 +25,8 @@ export function ForgotPasswordPage() {
   const resetPassword = useAuthStore((state) => state.resetPassword);
 
   const [phase, setPhase] = useState<Phase>('email');
-  const [email, setEmail] = useState('');
+  // Если вход уже запоминали, адрес подставлен — останется только получить код.
+  const [email, setEmail] = useState(() => readRememberedEmail());
   const [emailError, setEmailError] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -98,7 +100,20 @@ export function ForgotPasswordPage() {
       return;
     }
     toast.success('Пароль обновлён', 'Войдите с новым паролем');
-    navigate('/login', { replace: true });
+    // Адрес передаём форме входа: после сброса не нужно вводить его заново.
+    navigate('/login', { replace: true, state: { email: email.trim().toLowerCase() } });
+  };
+
+  const resendCode = async (): Promise<void> => {
+    if (submitting || resendLeft > 0) return;
+    setSubmitting(true);
+    const outcome = await forgotPassword(email.trim().toLowerCase());
+    setSubmitting(false);
+    setResendLeft(Math.max(0, outcome.resendIn));
+    setExpiresLeft(Math.max(0, outcome.expiresIn));
+    setDevCode(outcome.devCode);
+    setNoticeKind(outcome.ok ? 'success' : 'info');
+    setNotice(outcome.ok ? 'Код отправлен ещё раз' : outcome.message ?? 'Не удалось отправить код');
   };
 
   return (
@@ -213,13 +228,7 @@ export function ForgotPasswordPage() {
             <button
               type="button"
               className="btn btn--ghost btn--block"
-              onClick={() => void forgotPassword(email.trim().toLowerCase()).then((outcome) => {
-                setResendLeft(Math.max(0, outcome.resendIn));
-                setExpiresLeft(Math.max(0, outcome.expiresIn));
-                setDevCode(outcome.devCode);
-                setNoticeKind(outcome.ok ? 'success' : 'info');
-                setNotice(outcome.ok ? 'Код отправлен ещё раз' : outcome.message ?? 'Не удалось отправить код');
-              })}
+              onClick={() => void resendCode()}
               disabled={submitting || resendLeft > 0}
             >
               {resendLeft > 0 ? `Отправить повторно через ${resendLeft} с` : 'Отправить код повторно'}

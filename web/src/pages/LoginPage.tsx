@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { IconSpinner } from '../components/Icons';
 import { savePending } from '../lib/pending';
@@ -10,12 +10,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const login = useAuthStore((state) => state.login);
   const user = useAuthStore((state) => state.user);
   const error = useAuthStore((state) => state.error);
   const clearError = useAuthStore((state) => state.clearError);
 
-  const [email, setEmail] = useState(() => readRememberedEmail());
+  // Адрес из сброса пароля важнее запомненного: человек только что его вводил.
+  const [email, setEmail] = useState(() => {
+    const fromReset = (location.state as { email?: string } | null)?.email;
+    return fromReset ?? readRememberedEmail();
+  });
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
