@@ -56,6 +56,37 @@ logging:
     root: ${abv.log-level:INFO}
     org.springframework.web.socket: WARN
 
+# -----------------------------------------------------------------------------
+# Метрики Spring Boot Actuator для Prometheus.
+#
+# Наружу они не публикуются: Nginx проксирует только /api/ (в api) и / (в web),
+# а порт контейнера api опубликован исключительно на loopback хоста
+# (127.0.0.1:18082, см. compose.prod.yaml). Prometheus стека monitoring
+# скрейпит /actuator/prometheus по этому loopback-адресу.
+#
+# Открыты только health и prometheus: /actuator/env, /configprops, /heapdump,
+# /threaddump не нужны и раскрывают внутренности процесса.
+# -----------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      # Без деталей: состав компонентов и ошибки БД знать снаружи незачем,
+      # для проверки живости у приложения есть свои /healthz и /readyz.
+      show-details: never
+  metrics:
+    # Общая метка на всех рядах: отличает ababawa от других проектов в одном
+    # Prometheus, даже если они случайно попадут в одну джобу.
+    tags:
+      application: ababawa
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
 abv:
   # Окружение: production включает дополнительные проверки (JWT-секрет,
   # ALLOWED_ORIGINS) и запрещает демо-сид.

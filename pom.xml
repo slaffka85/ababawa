@@ -66,6 +66,19 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Метрики для Prometheus: GET /actuator/prometheus (JVM, HTTP-запросы,
+             пул HikariCP). Версии управляются BOM Spring Boot 4.1.2, поэтому
+             явные <version> не задаются. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

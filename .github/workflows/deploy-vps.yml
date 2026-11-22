@@ -2,7 +2,7 @@ name: Build and deploy to VPS
 
 on:
   push:
-    branches: [main, codex/turn-udp-test]
+    branches: [main, monitoring]
   workflow_dispatch:
 
 permissions:
