@@ -33,7 +33,7 @@
 |---|---|---|
 | `{{code}}` | `483920` | не нужно (только цифры, проверяется на сервере) |
 | `{{expires_minutes}}` | `15` | не нужно |
-| `{{support_email}}` | `support@abavava.tssv85.com` | в HTML — `&`, `"`, `<`, `'` |
+| `{{support_email}}` | `support@ababawa.tssv85.com` | в HTML — `&`, `"`, `<`, `'` |
 | `{{recipient_email}}` | `a***@example.com` | в HTML — то же, обязательно |
 
 ## В письме нет ссылок и кнопок

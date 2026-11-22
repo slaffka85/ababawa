@@ -243,9 +243,9 @@ final class SmtpTransport {
         private static String localName() {
             try {
                 String name = InetAddress.getLocalHost().getHostName();
-                return name == null || name.isBlank() ? "abavava.local" : name;
+                return name == null || name.isBlank() ? "ababawa.local" : name;
             } catch (Exception e) {
-                return "abavava.local";
+                return "ababawa.local";
             }
         }
 

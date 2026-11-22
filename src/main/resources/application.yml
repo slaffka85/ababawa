@@ -135,9 +135,9 @@ abv:
     starttls: false
     # Неявный TLS (обычно порт 465): true — шифрование с первого байта.
     ssl: false
-    from: no-reply@abavava.local
+    from: no-reply@ababawa.local
     from-name: Ababawa
-    support-email: support@abavava.local
+    support-email: support@ababawa.local
     timeout: 10s
 
   # Код подтверждения email: длина, срок жизни, лимиты.

@@ -39,7 +39,7 @@ class MailTestControllerTest {
             assertThat(response.error()).isNull();
             assertThat(response.email()).isEqualTo("tester@example.com");
             assertThat(response.code()).matches("\\d{6}");
-            assertThat(server.commands()).contains("MAIL FROM:<no-reply@abavava.local>");
+            assertThat(server.commands()).contains("MAIL FROM:<no-reply@ababawa.local>");
             assertThat(server.data()).contains("To: tester@example.com");
         }
     }

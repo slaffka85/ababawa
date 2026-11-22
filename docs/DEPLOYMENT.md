@@ -116,8 +116,8 @@ sudo systemctl reload nginx
    отличается:
 
    ```dotenv
-   ABV_MAIL_FROM=no-reply@abavava.tssv85.com
-   ABV_MAIL_SUPPORT_EMAIL=support@abavava.tssv85.com
+   ABV_MAIL_FROM=no-reply@ababawa.tssv85.com
+   ABV_MAIL_SUPPORT_EMAIL=support@ababawa.tssv85.com
    ```
 
 ## Почта для подтверждения email
@@ -160,7 +160,7 @@ sudo systemctl reload nginx
 3. Проверьте отправку с хоста:
 
    ```bash
-   printf 'Subject: postfix test\n\nhello\n' | sudo sendmail -f no-reply@abavava.tssv85.com you@example.com
+   printf 'Subject: postfix test\n\nhello\n' | sudo sendmail -f no-reply@ababawa.tssv85.com you@example.com
    sudo tail -n 30 /var/log/mail.log
    ```
 
@@ -172,25 +172,25 @@ sudo systemctl reload nginx
 1. SPF — разрешите IP сервера:
 
    ```
-   abavava.tssv85.com.  TXT  "v=spf1 a:abavava.tssv85.com ip4:<VPS_IP> -all"
+   ababawa.tssv85.com.  TXT  "v=spf1 a:ababawa.tssv85.com ip4:<VPS_IP> -all"
    ```
 
 2. DKIM — сгенерируйте ключ и подключите OpenDKIM:
 
    ```bash
    sudo apt install -y opendkim opendkim-tools
-   sudo mkdir -p /etc/opendkim/keys/abavava.tssv85.com
-   cd /etc/opendkim/keys/abavava.tssv85.com
-   sudo opendkim-genkey -s mail -d abavava.tssv85.com
+   sudo mkdir -p /etc/opendkim/keys/ababawa.tssv85.com
+   cd /etc/opendkim/keys/ababawa.tssv85.com
+   sudo opendkim-genkey -s mail -d ababawa.tssv85.com
    sudo chown opendkim:opendkim mail.private
    sudo cat mail.txt          # готовая TXT-запись для DNS
    ```
 
    ```
-   mail._domainkey.abavava.tssv85.com.  TXT  "v=DKIM1; k=rsa; p=<публичный ключ>"
+   mail._domainkey.ababawa.tssv85.com.  TXT  "v=DKIM1; k=rsa; p=<публичный ключ>"
    ```
 
-   В `/etc/opendkim.conf`: `Domain abavava.tssv85.com`, `Selector mail`, затем
+   В `/etc/opendkim.conf`: `Domain ababawa.tssv85.com`, `Selector mail`, затем
    `sudo systemctl enable --now opendkim` и в Postfix:
 
    ```bash
@@ -203,32 +203,32 @@ sudo systemctl reload nginx
 3. DMARC:
 
    ```
-   _dmarc.abavava.tssv85.com.  TXT  "v=DMARC1; p=quarantine; rua=mailto:postmaster@abavava.tssv85.com; adkim=s; aspf=s"
+   _dmarc.ababawa.tssv85.com.  TXT  "v=DMARC1; p=quarantine; rua=mailto:postmaster@ababawa.tssv85.com; adkim=s; aspf=s"
    ```
 
-4. PTR (rDNS) — в панели провайдера VPS: `<VPS_IP> → abavava.tssv85.com`.
+4. PTR (rDNS) — в панели провайдера VPS: `<VPS_IP> → ababawa.tssv85.com`.
    Без PTR Gmail и Microsoft режут письма. Имя из PTR должно совпадать с
    баннером SMTP (`220 <имя> ESMTP Postfix`): его задаёт `myhostname` в
    Postfix, а проверяющие сверяют PTR и A в обе стороны (FCrDNS).
 
 5. Поддомен **не наследует** записи родителя. SPF и DKIM ищутся ровно по
-   домену из `From` — если письмо уходит с `no-reply@abavava.tssv85.com`, то
+   домену из `From` — если письмо уходит с `no-reply@ababawa.tssv85.com`, то
    записи, сделанные для `tssv85.com`, его не аутентифицируют. DMARC —
    исключение: без своей записи проверяющий возьмёт политику организационного
    домена (`_dmarc.tssv85.com`), но `pass` от этого не появится. После смены
    `ABV_MAIL_FROM` проверьте домен именно из него:
 
    ```bash
-   dig +short TXT abavava.tssv85.com                   # v=spf1 ... -all
-   dig +short TXT mail._domainkey.abavava.tssv85.com   # v=DKIM1; ...
-   dig +short TXT _dmarc.abavava.tssv85.com            # v=DMARC1; p=none; ...
+   dig +short TXT ababawa.tssv85.com                   # v=spf1 ... -all
+   dig +short TXT mail._domainkey.ababawa.tssv85.com   # v=DKIM1; ...
+   dig +short TXT _dmarc.ababawa.tssv85.com            # v=DMARC1; p=none; ...
    ```
 
    Если ключ уже выпущен для `tssv85.com`, тот же публичный ключ можно
    опубликовать и на поддомене; в `/etc/opendkim/KeyTable` тогда добавляется
-   строка `mail._domainkey.abavava.tssv85.com abavava.tssv85.com:mail:/путь/к/mail.private`,
-   а в `SigningTable` — `*@abavava.tssv85.com mail._domainkey.abavava.tssv85.com`.
-   Проверка перед отправкой: `opendkim-testkey -d abavava.tssv85.com -s mail -vvv`
+   строка `mail._domainkey.ababawa.tssv85.com ababawa.tssv85.com:mail:/путь/к/mail.private`,
+   а в `SigningTable` — `*@ababawa.tssv85.com mail._domainkey.ababawa.tssv85.com`.
+   Проверка перед отправкой: `opendkim-testkey -d ababawa.tssv85.com -s mail -vvv`
    (должно быть `key OK`).
 
 Проверка: отправьте письмо на адрес из `mail-tester.com` и убедитесь, что
@@ -237,9 +237,9 @@ SPF/DKIM/DMARC «pass», и только потом тестируйте Gmail. 
 
 ```
 Authentication-Results: mx.google.com;
-       dkim=pass header.i=@abavava.tssv85.com header.s=mail;
-       spf=pass (...) smtp.mailfrom=no-reply@abavava.tssv85.com;
-       dmarc=pass (p=NONE) header.from=abavava.tssv85.com
+       dkim=pass header.i=@ababawa.tssv85.com header.s=mail;
+       spf=pass (...) smtp.mailfrom=no-reply@ababawa.tssv85.com;
+       dmarc=pass (p=NONE) header.from=ababawa.tssv85.com
 ```
 
 `spf=none` и `dkim=none` означают, что записей нет по домену из `From` (пункт

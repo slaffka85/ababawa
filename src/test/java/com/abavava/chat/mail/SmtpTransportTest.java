@@ -21,12 +21,12 @@ class SmtpTransportTest {
             byte[] body = "Subject: test\r\n\r\n.leading dot\r\nbody line\r\n"
                     .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 
-            transport.deliver("from@abavava.local", "user@example.com", body);
+            transport.deliver("from@ababawa.local", "user@example.com", body);
             server.awaitCompletion();
 
             assertThat(server.commands()).anyMatch(command -> command.startsWith("EHLO "));
             assertThat(server.commands()).contains(
-                    "MAIL FROM:<from@abavava.local>",
+                    "MAIL FROM:<from@ababawa.local>",
                     "RCPT TO:<user@example.com>",
                     "DATA");
             // Строка, начинающаяся с точки, передаётся как «..» — иначе сервер
@@ -41,7 +41,7 @@ class SmtpTransportTest {
     void authenticatesWithPlainWhenCredentialsAreConfigured() throws Exception {
         try (FakeSmtpServer server = new FakeSmtpServer("250-AUTH PLAIN LOGIN\r\n250 8BITMIME", false)) {
             SmtpTransport transport = new SmtpTransport(server.settings("abv-user", "s3cret"));
-            transport.deliver("from@abavava.local", "user@example.com",
+            transport.deliver("from@ababawa.local", "user@example.com",
                     "Subject: test\r\n\r\nbody\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             server.awaitCompletion();
 
@@ -61,7 +61,7 @@ class SmtpTransportTest {
         try (FakeSmtpServer server = new FakeSmtpServer("250-AUTH PLAIN LOGIN\r\n250 8BITMIME", true)) {
             SmtpTransport transport = new SmtpTransport(server.settings("", ""));
 
-            assertThatThrownBy(() -> transport.deliver("from@abavava.local", "user@example.com",
+            assertThatThrownBy(() -> transport.deliver("from@ababawa.local", "user@example.com",
                     "Subject: test\r\n\r\nbody\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
                     .isInstanceOf(IOException.class)
                     .hasMessageContaining("550");

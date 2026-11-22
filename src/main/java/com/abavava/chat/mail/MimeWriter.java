@@ -29,7 +29,7 @@ final class MimeWriter {
     static byte[] build(String fromName, String from, String to, String subject, String text, String html) {
         String safeFrom = address(from, "from");
         String safeTo = address(to, "to");
-        String boundary = "=_abavava_" + UUID.randomUUID().toString().replace("-", "");
+        String boundary = "=_ababawa_" + UUID.randomUUID().toString().replace("-", "");
         String domain = domainOf(safeFrom);
 
         StringBuilder message = new StringBuilder(1024 + text.length() + html.length());
@@ -98,6 +98,6 @@ final class MimeWriter {
     private static String domainOf(String address) {
         int at = address.lastIndexOf('@');
         String domain = at >= 0 ? address.substring(at + 1) : "";
-        return domain.isEmpty() ? "abavava.local" : domain;
+        return domain.isEmpty() ? "ababawa.local" : domain;
     }
 }

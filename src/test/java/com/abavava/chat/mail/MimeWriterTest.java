@@ -15,19 +15,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** MIME-письмо: заголовки, multipart/alternative и защита от инъекции заголовков. */
 class MimeWriterTest {
 
-    private static final String FROM = "no-reply@abavava.local";
+    private static final String FROM = "no-reply@ababawa.local";
 
     @Test
     void buildsMultipartAlternativeWithBothParts() {
-        byte[] raw = MimeWriter.build("abavava", FROM, "user@example.com",
-                "abavava verification code: 483920", "plain body line", "<p>html body</p>");
+        byte[] raw = MimeWriter.build("ababawa", FROM, "user@example.com",
+                "ababawa verification code: 483920", "plain body line", "<p>html body</p>");
         String message = new String(raw, StandardCharsets.US_ASCII);
 
-        assertThat(message).startsWith("From: abavava <" + FROM + ">\r\n");
+        assertThat(message).startsWith("From: ababawa <" + FROM + ">\r\n");
         assertThat(message).contains("To: user@example.com\r\n");
-        assertThat(message).contains("Subject: abavava verification code: 483920\r\n");
+        assertThat(message).contains("Subject: ababawa verification code: 483920\r\n");
         assertThat(message).contains("Message-ID: <");
-        assertThat(message).contains("@abavava.local>\r\n");
+        assertThat(message).contains("@ababawa.local>\r\n");
         assertThat(message).contains("MIME-Version: 1.0\r\n");
         assertThat(message).contains("Auto-Submitted: auto-generated\r\n");
         assertThat(message).contains("Content-Type: multipart/alternative; boundary=\"");
@@ -41,7 +41,7 @@ class MimeWriterTest {
 
     @Test
     void stripsHeaderInjectionAttempts() {
-        byte[] raw = MimeWriter.build("abavava", FROM, "user@example.com",
+        byte[] raw = MimeWriter.build("ababawa", FROM, "user@example.com",
                 "hello\r\nBcc: evil@example.com", "text", "html");
         String message = new String(raw, StandardCharsets.US_ASCII);
 
@@ -51,7 +51,7 @@ class MimeWriterTest {
 
     @Test
     void encodesNonAsciiSubjectAsRfc2047() {
-        byte[] raw = MimeWriter.build("abavava", FROM, "user@example.com", "код 123456", "text", "html");
+        byte[] raw = MimeWriter.build("ababawa", FROM, "user@example.com", "код 123456", "text", "html");
         String message = new String(raw, StandardCharsets.US_ASCII);
 
         assertThat(message).contains("Subject: =?UTF-8?B?");
@@ -59,9 +59,9 @@ class MimeWriterTest {
 
     @Test
     void refusesInvalidAddresses() {
-        assertThatThrownBy(() -> MimeWriter.build("abavava", FROM, "not-an-address", "s", "t", "h"))
+        assertThatThrownBy(() -> MimeWriter.build("ababawa", FROM, "not-an-address", "s", "t", "h"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> MimeWriter.build("abavava", "bad\r\naddress", "user@example.com", "s", "t", "h"))
+        assertThatThrownBy(() -> MimeWriter.build("ababawa", "bad\r\naddress", "user@example.com", "s", "t", "h"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
