@@ -40,6 +40,8 @@ public record AbvProperties(
         Cors cors,
         Ws ws,
         Chat chat,
+        Mail mail,
+        EmailVerification emailVerification,
         String fcmServiceAccountFile
 ) {
 
@@ -65,6 +67,34 @@ public record AbvProperties(
 
     /** Ограничения групповых диалогов. */
     public record Chat(int maxGroupMembers, int maxTitleLength) {
+    }
+
+    /** SMTP-транспорт: локальный Postfix на хосте или внешний релей. */
+    public record Mail(
+            boolean enabled,
+            String host,
+            int port,
+            String username,
+            String password,
+            boolean starttls,
+            boolean ssl,
+            String from,
+            String fromName,
+            String supportEmail,
+            boolean testEndpoint,
+            Duration timeout) {
+    }
+
+    /** Код подтверждения email: длина, срок жизни и лимиты отправки/попыток. */
+    public record EmailVerification(
+            int codeLength,
+            Duration codeTtl,
+            Duration resendCooldown,
+            int maxResends,
+            Duration resendWindow,
+            int maxAttempts,
+            boolean echoCode,
+            String sendCode) {
     }
 
     public boolean isProduction() {
@@ -130,6 +160,72 @@ public record AbvProperties(
 
         requirePositive("CHAT_MAX_GROUP_MEMBERS", chat.maxGroupMembers() - 1L);
         requirePositive("CHAT_MAX_TITLE_LENGTH", chat.maxTitleLength());
+
+        validateMail();
+        validateEmailVerification();
+    }
+
+    private void validateMail() {
+        if (!mail.enabled()) {
+            return;
+        }
+        if (mail.host() == null || mail.host().isBlank()) {
+            throw new IllegalStateException("ABV_MAIL_HOST must be set when abv.mail.enabled=true");
+        }
+        if (mail.port() < 1 || mail.port() > 65535) {
+            throw new IllegalStateException("ABV_MAIL_PORT must be within 1..65535");
+        }
+        if (mail.starttls() && mail.ssl()) {
+            throw new IllegalStateException("ABV_MAIL_STARTTLS and ABV_MAIL_SSL are mutually exclusive");
+        }
+        if (!looksLikeEmail(mail.from())) {
+            throw new IllegalStateException("ABV_MAIL_FROM must be a valid email address");
+        }
+        requirePositive("MAIL_PORT", mail.port());
+        requirePositive("MAIL_TIMEOUT", mail.timeout());
+    }
+
+    private void validateEmailVerification() {
+        EmailVerification code = emailVerification;
+        if (code == null) {
+            throw new IllegalStateException("abv.email-verification is not configured");
+        }
+        if (code.codeLength() < 4 || code.codeLength() > 10) {
+            throw new IllegalStateException("ABV_EMAIL_CODE_LENGTH must be within 4..10");
+        }
+        if (code.maxAttempts() < 3 || code.maxAttempts() > 20) {
+            throw new IllegalStateException("ABV_EMAIL_MAX_ATTEMPTS must be within 3..20");
+        }
+        requirePositive("EMAIL_CODE_TTL", code.codeTtl());
+        requireNonNegative("EMAIL_RESEND_COOLDOWN", code.resendCooldown());
+        requirePositive("EMAIL_MAX_RESENDS", code.maxResends());
+        requirePositive("EMAIL_RESEND_WINDOW", code.resendWindow());
+        String mode = code.sendCode() == null ? "" : code.sendCode().trim().toLowerCase(java.util.Locale.ROOT);
+        if (!java.util.Set.of("off", "dev", "on").contains(mode)) {
+            throw new IllegalStateException(
+                    "ABV_EMAILVERIFICATION_SENDCODE must be one of off, dev, on (got: " + code.sendCode() + ")");
+        }
+    }
+
+    /** Грубая проверка адреса для конфигурации: формат проверяет AuthService. */
+    private static boolean looksLikeEmail(String value) {
+        if (value == null) {
+            return false;
+        }
+        String trimmed = value.trim();
+        int at = trimmed.indexOf('@');
+        return at > 0
+                && at == trimmed.lastIndexOf('@')
+                && at < trimmed.length() - 1
+                && trimmed.chars().noneMatch(Character::isWhitespace);
+    }
+
+    /**
+     * Код подтверждения можно вернуть клиенту (и записать в лог) только вне
+     * production: в бою он должен существовать исключительно в письме.
+     */
+    public boolean echoVerificationCode() {
+        return emailVerification != null && emailVerification.echoCode() && !isProduction();
     }
 
     private static void requirePositive(String name, long value) {

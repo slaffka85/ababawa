@@ -1,0 +1,23 @@
+Hey, {{nickname}},
+
+Please verify your email address.
+
+Here is your Ababawa email verification code:
+
+{{code}}
+
+This code is valid for {{expires_minutes}} minutes and can only be used once.
+
+Please don't share this code with anyone: we'll never ask for it on the phone or via email.
+
+If you didn't request this code, you can safely ignore this email.
+
+Thanks,
+The Ababawa Team
+
+--
+Ababawa - Secure messenger with calls
+Need help? {{support_email}}
+Sent to {{recipient_email}}
+
+@ababawa.tssv85.com #{{code}}

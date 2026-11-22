@@ -20,12 +20,14 @@ import java.util.UUID;
  */
 public class AccessTokenFilter implements Filter {
 
-    /** Публичные пути под /api/v1: аутентификация, health и WebSocket-рукопожатие. */
+    /** Публичные пути под /api/v1: аутентификация, health, WebSocket и временный тест почты. */
     private static final String[] PUBLIC_PREFIXES = {
             "/api/v1/auth/",
             "/api/v1/healthz",
             "/api/v1/readyz",
-            "/api/v1/ws"
+            "/api/v1/ws",
+            // Временный MailTestController: токена ещё нет, почту настраивают до регистрации.
+            "/api/v1/mail/"
     };
 
     private final JwtService jwtService;

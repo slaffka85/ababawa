@@ -113,7 +113,7 @@ export function directPeer(view: ConversationView, myUserId: UUID | null): User 
 export function conversationTitle(view: ConversationView, myUserId: UUID | null): string {
   if (view.conversation.title) return view.conversation.title;
   const peer = directPeer(view, myUserId);
-  return peer?.display_name ?? 'Диалог';
+  return peer?.nickname ?? 'Диалог';
 }
 
 export function isGroupConversation(view: ConversationView): boolean {

@@ -41,7 +41,7 @@ export const ConversationItem = memo(function ConversationItem({
     preview = 'Звонок';
   } else {
     const author = lastMessage.sender_id === myUserId ? 'Вы' : isGroup
-      ? view.members.find((member) => member.id === lastMessage.sender_id)?.display_name ?? 'Участник'
+      ? view.members.find((member) => member.id === lastMessage.sender_id)?.nickname ?? 'Участник'
       : '';
     preview = author ? `${author}: ${messagePreview(lastMessage.body)}` : messagePreview(lastMessage.body);
   }

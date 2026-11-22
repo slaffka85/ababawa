@@ -610,6 +610,116 @@ a:hover {
   font-size: 13px;
 }
 
+.auth__info {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: #b9d2ff;
+  font-size: 13px;
+}
+
+.auth__info--success {
+  background: rgba(53, 192, 122, 0.16);
+  color: #9fe7bf;
+}
+
+/* ---------------- вход: «запомнить меня» и ссылки ---------------- */
+
+.auth__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.auth__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auth__check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.auth__link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.auth__link:hover {
+  text-decoration: underline;
+}
+
+/* ---------------- подтверждение email ---------------- */
+
+.code-entry {
+  display: flex;
+  gap: 8px;
+}
+
+.code-entry__cell {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  height: 54px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Courier New', monospace;
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.code-entry__cell:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.code-entry__cell--invalid {
+  border-color: rgba(255, 90, 95, 0.6);
+}
+
+.verify__row {
+  display: flex;
+  gap: 10px;
+}
+
+.verify__row > .btn {
+  flex: 1;
+}
+
+.verify__hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.verify__email {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.verify__code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Courier New', monospace;
+  letter-spacing: 0.12em;
+}
+
 .auth__footer {
   text-align: center;
   font-size: 13.5px;

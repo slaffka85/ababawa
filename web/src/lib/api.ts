@@ -2,7 +2,8 @@
  * Обёртка над fetch для REST API v1 (docs/API.md).
  *
  * Особенности:
- *  - токены: access — в памяти + localStorage (`abv.access`), refresh — в localStorage (`abv.refresh`);
+ *  - токены: access — в памяти + хранилище, refresh — localStorage («Запомнить меня»)
+ *    или sessionStorage (сессия до закрытия вкладки);
  *  - на 401 один раз обновляем access через /auth/refresh и повторяем исходный запрос;
  *  - параллельные 401 не порождают лавину refresh: все ждут один in-flight promise;
  *  - ошибки сервера `{ error: { code, message } }` превращаются в типизированный ApiError.
@@ -17,9 +18,12 @@ import type {
   ConversationView,
   HealthResponse,
   IceConfigResponse,
+  ForgotPasswordResponse,
   Message,
   MessageEnvelope,
   MessagePageResponse,
+  RegisterPendingResponse,
+  ResendResponse,
   TypingState,
   User,
   UserEnvelope,
@@ -70,6 +74,30 @@ export class ApiError extends Error {
 /** Человекочитаемые сообщения для типовых кодов контракта. */
 export function humanizeApiError(error: unknown): string {
   if (error instanceof ApiError) {
+    const details = error.details ?? {};
+    // Подтверждение email: сервер отдаёт машинные детали, текст собираем здесь.
+    if (details.field === 'code') {
+      if (details.reason === 'expired') return 'Срок действия кода истёк. Запросите новый код.';
+      if (details.reason === 'too_many_attempts') return 'Слишком много попыток. Запросите новый код.';
+      if (typeof details.attempts_left === 'number') {
+        return details.attempts_left > 0
+          ? `Неверный код. Осталось попыток: ${details.attempts_left}.`
+          : 'Неверный код. Запросите новый код.';
+      }
+      return 'Неверный код подтверждения';
+    }
+    if (details.reason === 'email_not_verified') {
+      return 'Подтвердите email — мы отправили на него код';
+    }
+    if (details.reason === 'email_already_verified') {
+      return 'Адрес уже подтверждён — войдите в аккаунт';
+    }
+    if (typeof details.resend_in === 'number') {
+      return `Письмо уже отправлено. Повторить можно через ${details.resend_in} с.`;
+    }
+    if (typeof details.retry_in === 'number') {
+      return 'Слишком много писем. Попробуйте позже.';
+    }
     switch (error.code) {
       case 'invalid_request':
         return error.message || 'Некорректный запрос';
@@ -105,12 +133,28 @@ let accessToken: string | null = null;
 /** 0 = срок неизвестен (тогда полагаемся на ответ сервера). */
 let accessExpiresAt = 0;
 
-function safeStorage(): Storage | null {
+const EMAIL_KEY = 'abv.last_email';
+
+/**
+ * Хранилище токенов. `remember` выбирает между localStorage (сессия переживает
+ * закрытие браузера) и sessionStorage (живёт до закрытия вкладки) — это и есть
+ * галочка «Запомнить меня».
+ */
+function storage(kind: 'local' | 'session'): Storage | null {
   try {
-    return window.localStorage;
+    return kind === 'local' ? window.localStorage : window.sessionStorage;
   } catch {
     return null;
   }
+}
+
+function readToken(key: string): string | null {
+  return storage('local')?.getItem(key) ?? storage('session')?.getItem(key) ?? null;
+}
+
+function removeToken(key: string): void {
+  storage('local')?.removeItem(key);
+  storage('session')?.removeItem(key);
 }
 
 /** Пытаемся достать exp из JWT, чтобы не хранить отдельный ключ. */
@@ -128,9 +172,7 @@ function readJwtExpiryMs(token: string): number {
 }
 
 function loadStoredTokens(): void {
-  const storage = safeStorage();
-  if (!storage) return;
-  accessToken = storage.getItem(ACCESS_KEY);
+  accessToken = readToken(ACCESS_KEY);
   if (accessToken) accessExpiresAt = readJwtExpiryMs(accessToken);
 }
 
@@ -141,27 +183,64 @@ export function getAccessToken(): string | null {
 }
 
 export function getRefreshToken(): string | null {
-  return safeStorage()?.getItem(REFRESH_KEY) ?? null;
+  return readToken(REFRESH_KEY);
 }
 
 export function hasRefreshToken(): boolean {
   return Boolean(getRefreshToken());
 }
 
-export function setTokens(access: string, refresh: string, expiresInSeconds?: number): void {
-  const storage = safeStorage();
+/** Где сейчас лежит refresh-токен: localStorage — «запомнили», sessionStorage — нет. */
+export function isRemembered(): boolean {
+  return Boolean(storage('local')?.getItem(REFRESH_KEY));
+}
+
+/**
+ * Сохраняет пару токенов.
+ *
+ * @param remember true — localStorage (сессия переживает перезапуск браузера),
+ *                 false — sessionStorage (живёт до закрытия вкладки),
+ *                 undefined — оставить текущее хранилище (например, при refresh).
+ */
+export function setTokens(
+  access: string,
+  refresh: string,
+  expiresInSeconds?: number,
+  remember?: boolean,
+): void {
+  const target = remember === undefined
+    ? (isRemembered() ? storage('local') : storage('session'))
+    : storage(remember ? 'local' : 'session');
   accessToken = access;
   accessExpiresAt = readJwtExpiryMs(access) || (expiresInSeconds ? Date.now() + expiresInSeconds * 1000 : 0);
-  storage?.setItem(ACCESS_KEY, access);
-  storage?.setItem(REFRESH_KEY, refresh);
+  // Переносим токены между хранилищами без «хвостов» в старом.
+  removeToken(ACCESS_KEY);
+  removeToken(REFRESH_KEY);
+  target?.setItem(ACCESS_KEY, access);
+  target?.setItem(REFRESH_KEY, refresh);
 }
 
 export function clearTokens(): void {
-  const storage = safeStorage();
   accessToken = null;
   accessExpiresAt = 0;
-  storage?.removeItem(ACCESS_KEY);
-  storage?.removeItem(REFRESH_KEY);
+  removeToken(ACCESS_KEY);
+  removeToken(REFRESH_KEY);
+}
+
+/** Запоминает email для формы входа (только при включённом «Запомнить меня»). */
+export function rememberEmail(email: string, remember: boolean): void {
+  const local = storage('local');
+  if (!local) return;
+  if (remember) {
+    local.setItem(EMAIL_KEY, email);
+  } else {
+    local.removeItem(EMAIL_KEY);
+  }
+}
+
+/** Последний email, который запомнили при входе ('' — ничего не сохранено). */
+export function readRememberedEmail(): string {
+  return storage('local')?.getItem(EMAIL_KEY) ?? '';
 }
 
 export function isAccessExpired(): boolean {
@@ -373,8 +452,33 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 /* ------------------------------------------------------------------ */
 
 export const authApi = {
-  register(input: { email: string; display_name: string; password: string }): Promise<AuthResponse> {
-    return request<AuthResponse>('/auth/register', { method: 'POST', body: input, auth: false });
+  /** Создаёт аккаунт и просит сервер отправить код: токенов в ответе нет (202). */
+  register(input: { email: string; nickname: string; password: string }): Promise<RegisterPendingResponse> {
+    return request<RegisterPendingResponse>('/auth/register', { method: 'POST', body: input, auth: false });
+  },
+
+  /** Проверка кода из письма: единственный способ получить токены после регистрации. */
+  verify(input: { email: string; code: string }): Promise<AuthResponse> {
+    return request<AuthResponse>('/auth/verify', { method: 'POST', body: input, auth: false });
+  },
+
+  /** Повторная отправка кода; 429 приходит с details.resend_in. */
+  resend(email: string): Promise<ResendResponse> {
+    return request<ResendResponse>('/auth/resend', { method: 'POST', body: { email }, auth: false });
+  },
+
+  /** Сброс пароля, шаг 1: код на email. Ответ одинаков для любого адреса. */
+  forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+    return request<ForgotPasswordResponse>('/auth/password/forgot', {
+      method: 'POST',
+      body: { email },
+      auth: false,
+    });
+  },
+
+  /** Сброс пароля, шаг 2: код + новый пароль. 204; все сессии отзываются. */
+  resetPassword(input: { email: string; code: string; password: string }): Promise<void> {
+    return request<void>('/auth/password/reset', { method: 'POST', body: input, auth: false });
   },
 
   login(input: { email: string; password: string }): Promise<AuthResponse> {
@@ -409,14 +513,14 @@ export const authApi = {
     return request<UserEnvelope>('/me');
   },
 
-  patchMe(patch: { display_name?: string; avatar_url?: string | null }): Promise<UserEnvelope> {
+  patchMe(patch: { nickname?: string; avatar_url?: string | null }): Promise<UserEnvelope> {
     return request<UserEnvelope>('/me', { method: 'PATCH', body: patch });
   },
 };
 
 export const usersApi = {
   /**
-   * Поиск по display_name/email, исключая себя.
+   * Поиск по nickname/email, исключая себя.
    * Форма ответа в API.md не зафиксирована: принимаем и `{ items: [...] }`, и голый массив.
    */
   async search(query: string, limit = 20, signal?: AbortSignal): Promise<{ items: User[] }> {

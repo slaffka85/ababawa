@@ -1,9 +1,9 @@
-@base_url = http://localhost:8082
-@access_token =
-@refresh_token =
+#@base_url = http://localhost:8082
+#@access_token =
+#@refresh_token =
 
 ### ============================================
-### chat-abavava-java — HTTP Client
+### ababawa — HTTP Client
 ###
 ### IntelliJ IDEA HTTP Client для вызова API.
 ###
@@ -19,37 +19,116 @@
 ### ============================================
 
 ### --- Аутентификация ---
+### Регистрация двухшаговая: /register создаёт неподтверждённый аккаунт и
+### отправляет код письмом (202, токенов в ответе нет), /verify проверяет код
+### и только он выдаёт пару токенов. В development сервер кладёт код в
+### dev_code — письмо можно не ждать.
 
 ### 1. Регистрация нового пользователя
 ### POST /api/v1/auth/register
-### 201 Created
+### 202 Accepted
 POST {{base_url}}/api/v1/auth/register
 Content-Type: application/json
 
 {
-  "email": "tssv85@gmail.com",
-  "display_name": "slaffka85",
-  "password": "1"
-}
-
-### 1. Регистрация нового пользователя
-### POST /api/v1/auth/register
-### 201 Created
-POST {{base_url}}/api/v1/auth/register
-Content-Type: application/json
-
-{
-  "email": "javadevelopersamara85@gmail.com",
-  "display_name": "developer",
+  "email": "kostik.pankratov.2022@mail.ru",
+  "nickname": "kostik.pankratov.2022",
   "password": "1"
 }
 
 > {%
-  client.assert(response.status === 201, "Expected 201, got " + response.status);
+  client.assert(response.status === 202, "Expected 202, got " + response.status);
+  client.global.set("verify_email", "kostik.pankratov.2022@mail.ru");
+  client.global.set("dev_code", response.body.dev_code || "");
+  client.log("Code: " + response.body.dev_code + " | email_sent=" + response.body.email_sent);
+%}
+
+### 1b. Подтверждение email кодом из письма
+### POST /api/v1/auth/verify
+### 200 OK — ответ как у логина
+POST {{base_url}}/api/v1/auth/verify
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}",
+  "code": "{{dev_code}}"
+}
+
+> {%
+  client.assert(response.status === 200, "Expected 200, got " + response.status);
   client.global.set("access_token", response.body.access_token);
   client.global.set("refresh_token", response.body.refresh_token);
-  client.log("Registered. Token: " + response.body.access_token.substring(0, 30) + "...");
+  client.log("Verified. Token: " + response.body.access_token.substring(0, 30) + "...");
 %}
+
+### 1c. Повторная отправка кода
+### POST /api/v1/auth/resend
+### 202 Accepted; 429 с details.resend_in, если письмо ушло меньше минуты назад
+POST {{base_url}}/api/v1/auth/resend
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}"
+}
+
+### 1d. Ручная отправка кода на email (проверка SMTP)
+### POST /api/v1/auth/send-code
+### 202 Accepted; 409, если адрес не зарегистрирован или уже подтверждён;
+### 404, если send-code выключен (off или dev в production).
+### В development пауза 60 c игнорируется, код возвращается в dev_code.
+POST {{base_url}}/api/v1/auth/send-code
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}"
+}
+
+> {%
+  client.global.set("dev_code", response.body.dev_code || "");
+  client.log("Manual send: dev_code=" + response.body.dev_code + " | email_sent=" + response.body.email_sent);
+%}
+
+### 1e. Временный тест почты: код на любой адрес (без аккаунта)
+### POST /api/v1/mail/test
+### 200; sent=false и error, если SMTP недоступен или письмо отклонено.
+### 404, если ручка выключена: ABV_MAIL_TEST_ENDPOINT=false (так по умолчанию).
+POST {{base_url}}/api/v1/mail/test
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}"
+}
+
+> {%
+  client.log("Mail test: sent=" + response.body.sent + " | code=" + response.body.code + " | error=" + (response.body.error || "-"));
+%}
+
+### 1f. Сброс пароля, шаг 1: код на email
+### POST /api/v1/auth/password/forgot
+### 202; ответ одинаков для существующего и неизвестного адреса.
+POST {{base_url}}/api/v1/auth/password/forgot
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}"
+}
+
+> {%
+  client.global.set("reset_code", response.body.dev_code || "");
+  client.log("Forgot: resend_in=" + response.body.resend_in + " | dev_code=" + (response.body.dev_code || "-"));
+%}
+
+### 1g. Сброс пароля, шаг 2: код + новый пароль
+### POST /api/v1/auth/password/reset
+### 204; все refresh-токены пользователя отозваны.
+POST {{base_url}}/api/v1/auth/password/reset
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}",
+  "code": "{{reset_code}}",
+  "password": "new-secret-123"
+}
 
 ### 2. Логин
 ### POST /api/v1/auth/login
@@ -115,7 +194,7 @@ Content-Type: application/json
 Authorization: Bearer {{access_token}}
 
 {
-  "display_name": "New Name"
+  "nickname": "New Name"
 }
 
 ### 7. Список пользователей

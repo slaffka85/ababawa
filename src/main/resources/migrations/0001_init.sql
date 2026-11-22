@@ -1,4 +1,4 @@
--- 0001_init.sql — базовая схема chat-abavava
+-- 0001_init.sql — базовая схема ababawa
 -- Пользователи, refresh-токены, диалоги, сообщения, звонки.
 
 -- gen_random_uuid()

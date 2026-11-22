@@ -25,9 +25,9 @@ export function Sidebar({ myUserId, onSelectConversation, onOpenCallHistory, onO
   return (
     <aside className="sidebar">
       <header className="sidebar__profile">
-        <Avatar id={myUserId} name={user?.display_name ?? 'Я'} size={38} />
+        <Avatar id={myUserId} name={user?.nickname ?? 'Я'} size={38} />
         <div className="sidebar__profile-text">
-          <span className="sidebar__name">{user?.display_name ?? ''}</span>
+          <span className="sidebar__name">{user?.nickname ?? ''}</span>
           <WsIndicator />
         </div>
         <button

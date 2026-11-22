@@ -8,6 +8,10 @@ services:
       POSTGRES_USER: abavava
       POSTGRES_PASSWORD: ${ABV_DATABASE_PASSWORD:?Set ABV_DATABASE_PASSWORD in .env.production}
       POSTGRES_INITDB_ARGS: --data-checksums
+    # Порт опубликован только на loopback: БД доступна с сервера и через
+    # SSH-туннель, но не из интернета (Docker публикует порты в обход UFW).
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,6 +24,9 @@ services:
 
   api:
     image: ${ABV_API_IMAGE:?Set ABV_API_IMAGE in .deploy.env}
+    # Postfix живёт на хосте, api ходит в него как в host.docker.internal:25.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ABV_ENV: production
       ABV_HTTP_ADDR: 0.0.0.0:8082
@@ -34,6 +41,21 @@ services:
       ABV_TURN_URL: ${ABV_TURN_URL:-}
       ABV_TURN_USERNAME: ${ABV_TURN_USERNAME:-}
       ABV_TURN_CREDENTIAL: ${ABV_TURN_CREDENTIAL:-}
+      # Транзакционная почта (коды подтверждения). From и Support обязательны:
+      # без них письмо уйдёт с локального домена.
+      ABV_MAIL_ENABLED: ${ABV_MAIL_ENABLED:-true}
+      ABV_MAIL_HOST: ${ABV_MAIL_HOST:-host.docker.internal}
+      ABV_MAIL_PORT: ${ABV_MAIL_PORT:-25}
+      ABV_MAIL_USERNAME: ${ABV_MAIL_USERNAME:-}
+      ABV_MAIL_PASSWORD: ${ABV_MAIL_PASSWORD:-}
+      ABV_MAIL_STARTTLS: ${ABV_MAIL_STARTTLS:-false}
+      ABV_MAIL_SSL: ${ABV_MAIL_SSL:-false}
+      ABV_MAIL_FROM: ${ABV_MAIL_FROM:?Set ABV_MAIL_FROM in .env.production}
+      ABV_MAIL_SUPPORT_EMAIL: ${ABV_MAIL_SUPPORT_EMAIL:?Set ABV_MAIL_SUPPORT_EMAIL in .env.production}
+      # Временная ручка настройки SMTP: по умолчанию выключена (404).
+      ABV_MAIL_TEST_ENDPOINT: ${ABV_MAIL_TEST_ENDPOINT:-false}
+      # POST /auth/send-code: dev → в production выключен (404), on → публично.
+      ABV_EMAILVERIFICATION_SENDCODE: ${ABV_EMAILVERIFICATION_SENDCODE:-dev}
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,7 +66,7 @@ services:
     restart: unless-stopped
 
   coturn:
-    image: coturn/coturn:4.19.0-r0
+    image: coturn/coturn:4.19.2
     network_mode: host
     command:
       - -n
@@ -53,6 +75,7 @@ services:
       - --no-tcp
       - --no-tls
       - --no-tcp-relay
+      - --prometheus
       - --lt-cred-mech
       - --fingerprint
       - --realm=${ABV_DOMAIN:?Set ABV_DOMAIN in .env.production}
