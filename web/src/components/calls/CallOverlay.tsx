@@ -78,7 +78,7 @@ export function CallOverlay() {
   if (!call) return null;
 
   const peer = call.peer;
-  const peerName = peer?.display_name ?? 'Собеседник';
+  const peerName = peer?.nickname ?? 'Собеседник';
   const hasRemoteVideo = Boolean(remoteStream?.getVideoTracks().length);
   const hasLocalVideo = Boolean(localStream?.getVideoTracks().length) && cameraEnabled;
   const showVideoLayout = call.kind === 'video' || hasRemoteVideo;

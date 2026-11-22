@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * media-check.mjs — сквозная проверка того, что приложение chat-abavava РЕАЛЬНО
+ * media-check.mjs — сквозная проверка того, что приложение ababawa РЕАЛЬНО
  * передаёт медиа в звонке 1:1, в настоящем браузере (Chromium) с фейковыми
  * медиаустройствами.
  *
@@ -132,7 +132,7 @@ async function apiFetch(tokensPath, route, init = {}, token = null) {
 
 async function registerUser(label) {
   const email = `media-check-${RUN_ID}-${label}@example.com`;
-  const body = { email, display_name: `MediaCheck ${label} ${RUN_ID}`, password: PASSWORD };
+  const body = { email, nickname: `MediaCheck ${label} ${RUN_ID}`, password: PASSWORD };
   const response = await apiFetch(`POST /auth/register (${label})`, '/auth/register', {
     method: 'POST',
     body,
@@ -140,7 +140,7 @@ async function registerUser(label) {
   return {
     label,
     email,
-    displayName: body.display_name,
+    nickname: body.nickname,
     user: response.user,
     accessToken: response.access_token,
     refreshToken: response.refresh_token,
@@ -591,8 +591,8 @@ async function prepareUser(user, options) {
   await page.waitForSelector('.sidebar', { timeout: T.pageReady });
   await page.waitForSelector('.ws-indicator--open', { timeout: T.wsOpen });
 
-  const displayName = await page.locator('.sidebar__name').first().innerText();
-  info(`${user.label}: страница загружена, профиль «${displayName}», WebSocket открыт`);
+  const nickname = await page.locator('.sidebar__name').first().innerText();
+  info(`${user.label}: страница загружена, профиль «${nickname}», WebSocket открыт`);
 
   return { ...user, page, consoleLines };
 }
@@ -728,7 +728,7 @@ async function main() {
 
     /* 3. Видеозвонок */
     step('A открывает диалог и инициирует ВИДЕОзвонок');
-    await pageA.locator('.conv', { hasText: userB.displayName }).first().click();
+    await pageA.locator('.conv', { hasText: userB.nickname }).first().click();
     await pageA.waitForSelector('button[aria-label="Видеозвонок"]', { timeout: 15_000 });
     info('диалог открыт, кнопка «Видеозвонок» найдена (aria-label="Видеозвонок")');
     await pageA.click('button[aria-label="Видеозвонок"]');
@@ -768,8 +768,8 @@ async function main() {
     step('Проверки передачи медиа');
     const evidence = {};
     for (const [tag, first, second, name] of [
-      ['A', probeA1, probeA2, userB.displayName],
-      ['B', probeB1, probeB2, userA.displayName],
+      ['A', probeA1, probeA2, userB.nickname],
+      ['B', probeB1, probeB2, userA.nickname],
     ]) {
       const videoIn1 = pickInbound(first, 'video');
       const videoIn2 = pickInbound(second, 'video');

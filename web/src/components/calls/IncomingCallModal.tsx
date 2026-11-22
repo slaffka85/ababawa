@@ -28,8 +28,8 @@ export function IncomingCallModal() {
           {callKindLabel(call.kind)}
         </p>
 
-        <Avatar id={peer?.id ?? call.id} name={peer?.display_name ?? 'Собеседник'} size={92} />
-        <h2 className="call-modal__name">{peer?.display_name ?? 'Собеседник'}</h2>
+        <Avatar id={peer?.id ?? call.id} name={peer?.nickname ?? 'Собеседник'} size={92} />
+        <h2 className="call-modal__name">{peer?.nickname ?? 'Собеседник'}</h2>
         <p className="call-modal__hint">Входящий звонок</p>
 
         <div className="call-modal__actions">

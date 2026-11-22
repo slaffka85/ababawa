@@ -24,7 +24,7 @@ import java.util.UUID;
 public class UserController {
 
     private static final int MAX_AVATAR_URL_LENGTH = 512;
-    private static final int MAX_DISPLAY_NAME = 64;
+    private static final int MAX_NICKNAME = 64;
 
     private final UserRepository users;
     private final ObjectMapper mapper;
@@ -40,8 +40,13 @@ public class UserController {
         return ResponseEntity.ok(Map.of("user", users.byId(userId)));
     }
 
+    /**
+     * {@code display_name} — совместимость с клиентами, закешированными до
+     * переименования поля в {@code nickname}; в ответе всегда только nickname.
+     */
     public record UpdateMeRequest(
-            @JsonProperty("display_name") String displayName,
+            @JsonProperty("nickname") String nickname,
+            @JsonProperty("display_name") String legacyNickname,
             @JsonProperty("avatar_url") String avatarUrl) {
     }
 
@@ -49,18 +54,19 @@ public class UserController {
     public ResponseEntity<Map<String, Object>> updateMe(HttpServletRequest request) {
         UUID userId = CurrentUser.userId(request);
         UpdateMeRequest body = JsonBody.required(request, UpdateMeRequest.class, mapper);
-        if (body.displayName() == null && body.avatarUrl() == null) {
-            throw AbvException.invalid("nothing to update: provide display_name or avatar_url");
+        String requestedNickname = body.nickname() != null ? body.nickname() : body.legacyNickname();
+        if (requestedNickname == null && body.avatarUrl() == null) {
+            throw AbvException.invalid("nothing to update: provide nickname or avatar_url");
         }
-        String displayName = null;
-        if (body.displayName() != null) {
-            displayName = body.displayName().strip().replaceAll("\\s+", " ");
-            if (displayName.isEmpty()) {
-                throw AbvException.invalidField("display_name", "display_name must not be blank");
+        String nickname = null;
+        if (requestedNickname != null) {
+            nickname = requestedNickname.strip().replaceAll("\\s+", " ");
+            if (nickname.isEmpty()) {
+                throw AbvException.invalidField("nickname", "nickname must not be blank");
             }
-            if (displayName.codePointCount(0, displayName.length()) > MAX_DISPLAY_NAME) {
-                throw AbvException.invalidField("display_name",
-                        "display_name must be at most " + MAX_DISPLAY_NAME + " characters");
+            if (nickname.codePointCount(0, nickname.length()) > MAX_NICKNAME) {
+                throw AbvException.invalidField("nickname",
+                        "nickname must be at most " + MAX_NICKNAME + " characters");
             }
         }
         boolean avatarProvided = body.avatarUrl() != null;
@@ -77,7 +83,7 @@ public class UserController {
                 avatarUrl = null;
             }
         }
-        User updated = users.updateProfile(userId, displayName, avatarProvided, avatarUrl);
+        User updated = users.updateProfile(userId, nickname, avatarProvided, avatarUrl);
         return ResponseEntity.ok(Map.of("user", updated));
     }
 

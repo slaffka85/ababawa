@@ -10,7 +10,7 @@ const MIN_PASSWORD_LENGTH = 8;
 
 interface FieldErrors {
   email?: string;
-  displayName?: string;
+  nickname?: string;
   password?: string;
 }
 
@@ -22,7 +22,7 @@ export function RegisterPage() {
   const clearError = useAuthStore((state) => state.clearError);
 
   const [email, setEmail] = useState('');
-  const [displayName, setDisplayName] = useState('');
+  const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
@@ -38,7 +38,7 @@ export function RegisterPage() {
     const nextErrors: FieldErrors = {};
     if (!email.trim()) nextErrors.email = 'Укажите email';
     else if (!EMAIL_RE.test(email.trim())) nextErrors.email = 'Похоже, email указан неверно';
-    if (!displayName.trim()) nextErrors.displayName = 'Как вас называть?';
+    if (!nickname.trim()) nextErrors.nickname = 'Придумайте никнейм';
     if (password.length < MIN_PASSWORD_LENGTH) {
       nextErrors.password = `Минимум ${MIN_PASSWORD_LENGTH} символов`;
     }
@@ -46,9 +46,10 @@ export function RegisterPage() {
     if (Object.keys(nextErrors).length > 0) return;
 
     setSubmitting(true);
-    const ok = await register(email, displayName, password);
+    const ok = await register(email, nickname, password);
     setSubmitting(false);
-    if (ok) navigate('/', { replace: true });
+    // Аккаунт создан, но токенов ещё нет: код из письма вводится на /verify-email.
+    if (ok) navigate('/verify-email', { replace: true });
   };
 
   const resetError = (): void => {
@@ -59,25 +60,25 @@ export function RegisterPage() {
     <div className="auth">
       <form className="auth__card" onSubmit={handleSubmit} noValidate>
         <h1 className="auth__title">Регистрация</h1>
-        <p className="auth__subtitle">Создайте аккаунт chat-abavava</p>
+        <p className="auth__subtitle">Создайте аккаунт abavava</p>
 
         {error ? <p className="auth__error">{error}</p> : null}
 
         <label className="field">
-          <span className="field__label">Имя</span>
+          <span className="field__label">Никнейм</span>
           <input
-            className={`field__input${fieldErrors.displayName ? ' field__input--invalid' : ''}`}
+            className={`field__input${fieldErrors.nickname ? ' field__input--invalid' : ''}`}
             type="text"
-            value={displayName}
+            value={nickname}
             autoComplete="nickname"
-            placeholder="Аня"
+            placeholder="nickname"
             onChange={(event) => {
-              setDisplayName(event.target.value);
+              setNickname(event.target.value);
               resetError();
             }}
           />
-          {fieldErrors.displayName ? (
-            <span className="field__hint field__hint--error">{fieldErrors.displayName}</span>
+          {fieldErrors.nickname ? (
+            <span className="field__hint field__hint--error">{fieldErrors.nickname}</span>
           ) : null}
         </label>
 

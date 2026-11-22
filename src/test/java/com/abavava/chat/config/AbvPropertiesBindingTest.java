@@ -59,5 +59,21 @@ class AbvPropertiesBindingTest {
 
         assertThat(props.chat().maxGroupMembers()).isEqualTo(64);
         assertThat(props.chat().maxTitleLength()).isEqualTo(128);
+
+        assertThat(props.mail().enabled()).isTrue();
+        assertThat(props.mail().host()).isEqualTo("127.0.0.1");
+        assertThat(props.mail().port()).isEqualTo(25);
+        assertThat(props.mail().starttls()).isFalse();
+        assertThat(props.mail().ssl()).isFalse();
+        assertThat(props.mail().from()).isEqualTo("no-reply@ababawa.local");
+        assertThat(props.mail().testEndpoint()).isFalse();
+        assertThat(props.mail().timeout()).isEqualTo(Duration.ofSeconds(10));
+
+        assertThat(props.emailVerification().codeLength()).isEqualTo(6);
+        assertThat(props.emailVerification().codeTtl()).isEqualTo(Duration.ofMinutes(15));
+        assertThat(props.emailVerification().maxAttempts()).isEqualTo(5);
+        assertThat(props.emailVerification().resendCooldown()).isEqualTo(Duration.ofSeconds(60));
+        assertThat(props.emailVerification().maxResends()).isEqualTo(5);
+        assertThat(props.emailVerification().sendCode()).isEqualTo("dev");
     }
 }

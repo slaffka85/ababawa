@@ -2,7 +2,7 @@ name: Build and deploy to VPS
 
 on:
   push:
-    branches: [main, codex/turn-udp-test]
+    branches: [main, codex/turn-udp-test, codex/email-verification, codex/email-test]
   workflow_dispatch:
 
 permissions:
@@ -89,7 +89,7 @@ jobs:
             | ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
               'umask 077; cat > /opt/abavava/.deploy.env'
 
-      - name: Initialize UDP TURN credentials on VPS
+      - name: Initialize runtime settings on VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -113,6 +113,16 @@ jobs:
           sed -i '/^ABV_TURN_URL=/d; /^ABV_TURN_USERNAME=/d; /^ABV_TURN_CREDENTIAL=/d' .deploy.env
           printf '\nABV_TURN_URL=turn:%s:3478?transport=udp\nABV_TURN_USERNAME=%s\nABV_TURN_CREDENTIAL=%s\n' \
             "$domain" "$username" "$credential" >> .deploy.env
+
+          # Адреса писем с кодом подтверждения: по умолчанию выводятся из
+          # ABV_DOMAIN, но значения из .env.production имеют приоритет.
+          mail_from="$(sed -n 's/^ABV_MAIL_FROM=//p' .env.production | tr -d '\r' | tail -n 1)"
+          mail_support="$(sed -n 's/^ABV_MAIL_SUPPORT_EMAIL=//p' .env.production | tr -d '\r' | tail -n 1)"
+          if [ -z "$mail_from" ]; then mail_from="no-reply@$domain"; fi
+          if [ -z "$mail_support" ]; then mail_support="support@$domain"; fi
+          sed -i '/^ABV_MAIL_FROM=/d; /^ABV_MAIL_SUPPORT_EMAIL=/d; /^ABV_MAIL_APP_URL=/d' .deploy.env
+          printf 'ABV_MAIL_FROM=%s\nABV_MAIL_SUPPORT_EMAIL=%s\n' \
+            "$mail_from" "$mail_support" >> .deploy.env
           REMOTE
 
       - name: Open UDP TURN ports in host firewall

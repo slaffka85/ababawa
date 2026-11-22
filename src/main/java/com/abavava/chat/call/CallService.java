@@ -198,7 +198,7 @@ public class CallService implements CallCommands {
     private void sendIncomingCallPushes(Call call, User caller) {
         for (String token : pushDevices.tokens(call.calleeId())) {
             try {
-                pushSender.sendIncomingCall(token, call, caller.displayName());
+                pushSender.sendIncomingCall(token, call, caller.nickname());
             } catch (RuntimeException e) {
                 log.warn("incoming call push failed: call_id={} callee_id={}",
                         call.id(), call.calleeId(), e);

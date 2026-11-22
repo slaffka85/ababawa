@@ -25,7 +25,7 @@
 
 ```jsonc
 // User
-{ "id": "uuid", "email": "a@b.c", "display_name": "Аня", "avatar_url": null,
+{ "id": "uuid", "email": "a@b.c", "nickname": "Аня", "avatar_url": null,
   "created_at": "2025-01-31T12:00:00Z", "last_seen_at": "2025-01-31T12:05:00Z" }
 
 // Message
@@ -62,18 +62,141 @@
 
 ## Auth
 
+Регистрация двухшаговая: аккаунт создаётся неподтверждённым, на почту уходит
+6-значный код (живёт 15 минут, писем не больше 5 в час), а пара токенов
+появляется только после `/auth/verify`. Письмо собирается шаблоном
+`mail/verification-code.html` (см. `docs/mail/EMAIL-TEMPLATE.md`). Сброс пароля
+(`/auth/password/forgot` → `/auth/password/reset`) использует ту же схему кодов
+и писем с шаблоном `mail/password-reset.html`.
+
 ### POST `/auth/register`
 ```json
-{ "email": "a@b.c", "display_name": "Аня", "password": "secret123" }
+{ "email": "a@b.c", "nickname": "Аня", "password": "secret123" }
 ```
-`201` → `{ "user": User, "access_token": "...", "refresh_token": "...", "expires_in": 900 }`
-Ошибки: `422` (пароль < 8 символов, email невалиден), `409` (email занят).
+`202` → аккаунт создан, письмо с кодом отправлено (токенов в ответе нет):
+```json
+{ "verification_id": "uuid",
+  "email": "a***@b.c",
+  "expires_in": 900,
+  "resend_in": 60,
+  "email_sent": true,
+  "dev_code": null }
+```
+- `email` — замаскированный адрес; `email_sent` — письмо принято к отправке
+  (`false`, если SMTP выключен или очередь переполнена);
+- `dev_code` заполняется **только** при `ABV_ENV=development`, в production
+  всегда `null`: код существует исключительно в письме.
+
+Ошибки: `422` (email/nickname невалидны), `409` (email занят).
+
+Профильное поле называется `nickname` (до миграции `0005_nickname.sql` —
+`display_name`): колонка переименована без потери данных. Для клиентов,
+закешированных до переименования, `display_name` ещё принимается на входе
+`/auth/register` и `PATCH /me` как алиас, но в ответах всегда только `nickname`.
+
+### POST `/auth/verify`
+```json
+{ "email": "a@b.c", "code": "483920" }
+```
+`200` → как у login: `{ "user": User, "access_token": "...", "refresh_token": "...", "expires_in": 900 }`.
+
+Ошибки (все с `details.field = "code"`):
+| HTTP | code | details | Когда |
+|---|---|---|---|
+| `422` | `validation_failed` | `attempts_left` | неверный код; на код даётся 5 попыток |
+| `422` | `validation_failed` | `reason: "expired"` | код истёк или не запрашивался |
+| `422` | `validation_failed` | `reason: "too_many_attempts"` | попытки исчерпаны, код погашен |
+| `409` | `conflict` | — | адрес уже подтверждён |
+
+### POST `/auth/resend`
+```json
+{ "email": "a@b.c" }
+```
+`202` → `{ "resend_in": 60, "expires_in": 900, "email_sent": true }`. Предыдущий
+код гасится: действующим остаётся только последний. В development в ответ
+добавляется `dev_code` с новым кодом.
+
+`429` `rate_limited` — слишком часто (`details: { "field": "email", "resend_in": 59 }`)
+или исчерпан лимит писем (`details: { "retry_in": 3600 }`).
+Для незарегистрированного адреса ответ такой же `202`, но письмо не уходит.
+
+### POST `/auth/send-code`
+```json
+{ "email": "a@b.c" }
+```
+Ручная отправка кода на почту — проверить SMTP и пройти сценарий, не заполняя
+форму и не дожидаясь паузы. Работает только с **существующим** аккаунтом
+(сначала `/auth/register`). Подтверждённый адрес письмо тоже получает: это
+ручной инструмент проверки доставки, но код из такого письма не пройдёт
+`/auth/verify` — адрес уже подтверждён.
+
+| HTTP | code | details | Когда |
+|---|---|---|---|
+| `202` | — | — | письмо отправлено: `{ "resend_in": 0, "expires_in": 900, "email_sent": true, "dev_code": "483920" }` |
+| `409` | `conflict` | `reason: "email_not_registered"` | такого адреса в базе нет |
+| `404` | `not_found` | — | эндпоинт выключен (`send-code: off` или `dev` в production) |
+| `429` | `rate_limited` | `resend_in` / `retry_in` | в режиме `on`: пауза или часовой лимит |
+
+Доступ задаётся `abv.email-verification.send-code`
+(`ABV_EMAILVERIFICATION_SENDCODE`):
+
+| значение | когда работает | пауза и лимит |
+|---|---|---|
+| `off` | никогда (`404`) | — |
+| `dev` (по умолчанию) | только при `ABV_ENV != production` | игнорируются |
+| `on` | всегда | `resend-cooldown` и `max-resends`, как у `/auth/resend` |
+
+Предыдущий код гасится: действующим остаётся последний отправленный.
+
+### POST `/auth/password/forgot`
+
+```json
+{ "email": "a@b.c" }
+```
+
+`202` → код отправлен письмом (тема `[Ababawa] password reset code`, та же
+вёрстка, что у письма подтверждения):
+
+```json
+{ "email": "a***@b.c", "expires_in": 900, "resend_in": 60, "dev_code": null }
+```
+
+Ответ одинаков для существующего и неизвестного адреса: неизвестный просто не
+получает письмо (защита от перебора базы). Код и лимиты — из
+`abv.email-verification` (TTL, 5 попыток, пауза и часовой лимит отправок, как у
+`/auth/resend`). `429` `rate_limited` — `details.resend_in` / `details.retry_in`.
+
+### POST `/auth/password/reset`
+
+```json
+{ "email": "a@b.c", "code": "483920", "password": "new-secret123" }
+```
+
+`204` → пароль сменён, все refresh-токены пользователя отозваны (нужно войти
+заново). Пароль — от 8 до 72 байт. Код гасится; предыдущие коды сброса тоже.
+
+| HTTP | code | details | Когда |
+|---|---|---|---|
+| `422` | `validation_failed` | `field: "password"` | пароль короче 8 или длиннее 72 байт |
+| `422` | `validation_failed` | `field: "code"`, `attempts_left` | неверный код |
+| `422` | `validation_failed` | `reason: "expired"` | код истёк или не запрашивался |
+| `422` | `validation_failed` | `reason: "too_many_attempts"` | попытки исчерпаны, код погашен |
+
+Для незарегистрированного адреса — тот же `422` «invalid password reset code»:
+существование аккаунта не раскрывается.
 
 ### POST `/auth/login`
 ```json
 { "email": "a@b.c", "password": "secret123" }
 ```
-`200` → как у register. `401` при неверных данных (сообщение общее, без раскрытия).
+`200` → как у verify. `401` при неверных данных (сообщение общее, без раскрытия).
+`403` `forbidden` с `details: { "reason": "email_not_verified", "email": "a@b.c" }`,
+если пароль верный, но почта не подтверждена — клиент уводит на ввод кода.
+
+«Запомнить меня» — решение клиента, а не сервера: refresh-токен живёт
+`refresh-ttl` (30 дней) в любом случае, а клиент выбирает, где его хранить —
+постоянно (localStorage) или до закрытия вкладки (sessionStorage). Сервер об
+этом не знает.
 
 ### POST `/auth/refresh`
 ```json
@@ -93,15 +216,49 @@
 
 ### PATCH `/me`
 ```json
-{ "display_name": "Аня П.", "avatar_url": "https://..." }
+{ "nickname": "Аня П.", "avatar_url": "https://..." }
 ```
 `200` → `{ "user": User }`
+
+## Почта (временный тест)
+
+### POST `/mail/test`
+
+Ручка для настройки SMTP: генерирует код и **синхронно** отправляет письмо
+подтверждения на любой адрес, в ответе — результат SMTP-сеанса. Аккаунт не
+нужен; код не сохраняется в БД, поэтому `/auth/verify` его не примет (для
+настоящего сценария — `/auth/register`).
+
+```json
+{ "email": "you@example.com" }
+```
+`200`:
+```json
+{ "email": "you@example.com", "code": "483920", "sent": true }
+```
+`200`, если SMTP недоступен или письмо отклонено ({`error` — исключение
+транспорта, `code` сгенерирован, но письмо не ушло):
+```json
+{ "email": "you@example.com", "code": "483920", "sent": false,
+  "error": "java.net.ConnectException: Connection refused" }
+```
+`422` `validation_failed` — пустой или невалидный `email`. `404` — ручка
+выключена. HTTP-код всегда `200`, когда запрос дошёл до отправки: результат
+разбирается по `sent`/`error`, а не по статусу.
+
+Ручка существует только при `abv.mail.test-endpoint=true`
+(`ABV_MAIL_TEST_ENDPOINT`): по умолчанию и на VPS флаг выключен, контроллер не
+создаётся, маршрут отвечает `404`. `ABV_EMAILVERIFICATION_SENDCODE` на неё не
+влияет. Включённая ручка ограничена общим rate-limit (30 в минуту на IP).
+
+**Временная ручка:** после настройки почты удалите `MailTestController`,
+`/api/v1/mail/` в `AccessTokenFilter` и `/api/v1/mail/*` в `WebFilterConfig`.
 
 ## Пользователи
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/users?q=<подстрока>&limit=20` | поиск по `display_name`/`email`, исключая себя |
+| GET | `/users?q=<подстрока>&limit=20` | поиск по `nickname`/`email`, исключая себя |
 | GET | `/users/{id}` | профиль; `404`, если нет |
 
 ## Диалоги

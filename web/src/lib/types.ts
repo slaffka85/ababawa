@@ -14,7 +14,7 @@ export type Timestamp = string;
 export interface User {
   id: UUID;
   email: string;
-  display_name: string;
+  nickname: string;
   avatar_url: string | null;
   created_at: Timestamp;
   last_seen_at: Timestamp | null;
@@ -116,6 +116,37 @@ export interface AuthResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+}
+
+/** Ответ на регистрацию: аккаунт создан, но ждёт кода из письма (токенов нет). */
+export interface RegisterPendingResponse {
+  verification_id: UUID;
+  /** Замаскированный адрес: a***@example.com */
+  email: string;
+  expires_in: number;
+  resend_in: number;
+  /** Письмо принято к отправке (false — SMTP выключен или очередь переполнена). */
+  email_sent: boolean;
+  /** Только в development: код продублирован в ответе, в production всегда null. */
+  dev_code?: string | null;
+}
+
+export interface ResendResponse {
+  resend_in: number;
+  expires_in: number;
+  email_sent: boolean;
+  /** Только в development: новый код продублирован в ответе. */
+  dev_code?: string | null;
+}
+
+/** Ответ на запрос сброса пароля: одинаков для существующего и неизвестного адреса. */
+export interface ForgotPasswordResponse {
+  /** Замаскированный адрес: a***@example.com */
+  email: string;
+  expires_in: number;
+  resend_in: number;
+  /** Только в development: код продублирован в ответе. */
+  dev_code?: string | null;
 }
 
 export interface UserEnvelope {

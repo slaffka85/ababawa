@@ -56,7 +56,7 @@ export function NewChatModal({ open, onClose }: NewChatModalProps) {
     try {
       const chat = useChatStore.getState();
       if (isGroup) {
-        const groupTitle = title.trim() || selected.map((user) => user.display_name).join(', ');
+        const groupTitle = title.trim() || selected.map((user) => user.nickname).join(', ');
         const view = await api.conversations.createGroup(
           groupTitle,
           selected.map((user) => user.id),
@@ -92,7 +92,7 @@ export function NewChatModal({ open, onClose }: NewChatModalProps) {
           <div className="chips">
             {selected.map((user) => (
               <button key={user.id} type="button" className="chip" onClick={() => toggle(user)}>
-                {user.display_name}
+                {user.nickname}
                 <IconClose size={13} />
               </button>
             ))}
@@ -149,10 +149,10 @@ export function NewChatModal({ open, onClose }: NewChatModalProps) {
                 className={`conv conv--user${isSelected ? ' conv--selected' : ''}`}
                 onClick={() => toggle(user)}
               >
-                <Avatar id={user.id} name={user.display_name} size={38} />
+                <Avatar id={user.id} name={user.nickname} size={38} />
                 <span className="conv__main">
                   <span className="conv__row">
-                    <span className="conv__title">{user.display_name}</span>
+                    <span className="conv__title">{user.nickname}</span>
                   </span>
                   <span className="conv__row">
                     <span className="conv__preview">{user.email}</span>
