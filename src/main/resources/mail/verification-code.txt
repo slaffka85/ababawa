@@ -20,4 +20,4 @@ Ababawa - Secure messenger with calls
 Need help? {{support_email}}
 Sent to {{recipient_email}}
 
-@ababawa.com #{{code}}
+@ababawa.tssv85.com #{{code}}

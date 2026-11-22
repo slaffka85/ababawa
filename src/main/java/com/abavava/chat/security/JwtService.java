@@ -16,13 +16,13 @@ import java.util.UUID;
 
 /**
  * Access-токен: JWT HS256, 15 минут, поля — как в Go-реализации
- * (internal/auth/tokens.go): iss=chat-abavava, sub=uuid, typ=access,
+ * (internal/auth/tokens.go): iss=ababawa, sub=uuid, typ=access,
  * iat/nbf/exp, jti. Сознательно без внешних библиотек — контракт проверяется
  * тестами на совместимость токенов обоих бэкендов.
  */
 public final class JwtService {
 
-    private static final String ISSUER = "chat-abavava";
+    private static final String ISSUER = "ababawa";
     private static final String TYPE_ACCESS = "access";
     private static final String ALG = "HS256";
     private static final byte[] HEADER =
