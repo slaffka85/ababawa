@@ -1,5 +1,5 @@
 # =============================================================================
-# Конфигурация abavava.
+# Конфигурация ababawa.
 #
 # Это единственный источник значений по умолчанию: в Java-коде параметров не
 # зашито. Стандартные вещи Spring Boot (сервер, пул соединений, логирование)
@@ -18,7 +18,7 @@ spring:
   config:
     import: "optional:file:./.env[.properties]"
   application:
-    name: abavava
+    name: ababawa
   main:
     banner-mode: off
   autoconfigure:
