@@ -4,8 +4,10 @@
 
 | Файл | Что это |
 |---|---|
-| `src/main/resources/mail/verification-code.html` | HTML-часть письма (`text/html`, multipart/alternative) |
+| `src/main/resources/mail/verification-code.html` | HTML-часть письма с кодом подтверждения email (`text/html`, multipart/alternative) |
 | `src/main/resources/mail/verification-code.txt` | текстовая часть (`text/plain`) — нужна и для доставляемости, и для парсеров |
+| `src/main/resources/mail/password-reset.html` | HTML-часть письма со сбросом пароля |
+| `src/main/resources/mail/password-reset.txt` | текстовая часть письма со сбросом пароля |
 | `docs/mail/verification-code.preview.html` | отрендеренный образец с тестовыми данными (код 483920) — просто откройте в браузере |
 
 Шаблоны лежат в classpath (`classpath:mail/verification-code.html`), потому что
@@ -15,15 +17,15 @@
 
 | Класс | Что делает |
 |---|---|
-| `mail.MailTemplates` | читает оба файла из classpath, подставляет `{{...}}`; HTML экранируется, plain-text — нет |
-| `mail.VerificationMailer` | считает срок действия и отдаёт письмо отправителю |
+| `mail.MailTemplates` | читает оба набора файлов из classpath, подставляет `{{...}}`; HTML экранируется, plain-text — нет |
+| `mail.VerificationMailer` | считает срок действия и отдаёт письмо (подтверждение email или сброс пароля) отправителю |
 | `mail.SmtpMailSender` | очередь на одном фоновом потоке + встроенный SMTP-клиент (`SmtpTransport`), без внешних зависимостей |
 | `mail.MimeWriter` | multipart/alternative: base64-части, `Auto-Submitted`, `Message-ID`, защита от инъекции заголовков |
 
-Тема письма собирается кодом — `[Ababawa] email verification code`. Кода в теме
-нет: он не должен светиться на локскрине и в превью уведомлений, а название
-действия там и так есть. Формат повторяет письма GitHub
-(`[GitHub] Sudo email verification code`).
+Тема письма собирается кодом — `[Ababawa] email verification code` (у сброса
+пароля — `[Ababawa] password reset code`). Кода в теме нет: он не должен
+светиться на локскрине и в превью уведомлений, а название действия там и так
+есть. Формат повторяет письма GitHub (`[GitHub] Sudo email verification code`).
 Тесты: `MailTemplatesTest`, `MimeWriterTest`, `SmtpTransportTest`
 (последний поднимает фейковый SMTP-сервер в тесте и проверяет протокол).
 
@@ -57,6 +59,14 @@
 
 Один формат — `[Ababawa] email verification code` (собирается в
 `MailTemplates.verificationCode`). Бренд в скобках + название действия, без кода.
+
+## Письмо сброса пароля
+
+`password-reset.html/.txt` — та же вёрстка и тот же код, другой текст: заголовок
+«Reset your password», абзац о запросе сброса и предупреждение игнорировать
+письмо, если сброс не запрашивали. Preheader — «Use this one-time code to choose
+a new Ababawa password.», служебная строка автозаполнения и футер такие же.
+Шаблон наполняется сервисом `PasswordResetService` (см. `docs/API.md`).
 
 ## Preheader
 

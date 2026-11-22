@@ -138,6 +138,10 @@ abv:
     from: no-reply@ababawa.local
     from-name: Ababawa
     support-email: support@ababawa.local
+    # Временная ручка проверки SMTP: POST /api/v1/mail/test. По умолчанию
+    # выключена (404) и на VPS остаётся выключенной; включается только на время
+    # настройки почты: ABV_MAIL_TEST_ENDPOINT=true.
+    test-endpoint: false
     timeout: 10s
 
   # Код подтверждения email: длина, срок жизни, лимиты.

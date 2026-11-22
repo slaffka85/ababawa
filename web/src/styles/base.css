@@ -623,6 +623,41 @@ a:hover {
   color: #9fe7bf;
 }
 
+/* ---------------- вход: «запомнить меня» и ссылки ---------------- */
+
+.auth__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.auth__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auth__check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.auth__link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.auth__link:hover {
+  text-decoration: underline;
+}
+
 /* ---------------- подтверждение email ---------------- */
 
 .code-entry {

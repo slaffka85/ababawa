@@ -41,6 +41,7 @@ public class AuthService {
     private final JwtService jwt;
     private final AbvProperties props;
     private final EmailVerificationService verifications;
+    private final PasswordResetService passwordResets;
 
     public record SessionMeta(String userAgent, String ip) {
     }
@@ -111,6 +112,16 @@ public class AuthService {
      */
     public EmailVerificationService.Resent sendVerificationCode(String email, String ip) {
         return verifications.sendCode(email, ip);
+    }
+
+    /** Запрос кода для сброса пароля: ответ не раскрывает существование адреса. */
+    public PasswordResetService.Requested forgotPassword(String email, String ip) {
+        return passwordResets.request(email, ip);
+    }
+
+    /** Проверка кода и смена пароля; после успеха все refresh-токены отозваны. */
+    public void resetPassword(String email, String code, String password) {
+        passwordResets.reset(email, code, password);
     }
 
     public AuthResult login(LoginInput input, SessionMeta meta) {
@@ -207,7 +218,7 @@ public class AuthService {
         return name;
     }
 
-    private static void validatePassword(String password) {
+    static void validatePassword(String password) {
         String value = password == null ? "" : password;
         int bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
         if (bytes < MIN_PASSWORD_LENGTH) {

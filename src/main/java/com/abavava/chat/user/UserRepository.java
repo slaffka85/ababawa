@@ -123,6 +123,17 @@ public class UserRepository implements UserLookup {
         return updated.orElseThrow(() -> AbvException.notFound("user not found"));
     }
 
+    /** Новый хеш пароля (сброс пароля); несуществующий id — 404. */
+    public void updatePassword(UUID id, String passwordHash) {
+        int updated = jdbc.sql("UPDATE users SET password_hash = ? WHERE id = ?")
+                .param(passwordHash)
+                .param(id)
+                .update();
+        if (updated == 0) {
+            throw AbvException.notFound("user not found");
+        }
+    }
+
     @Override
     public User byId(UUID id) {
         User found = findById(id);

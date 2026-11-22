@@ -12,42 +12,64 @@ import java.util.Map;
 /**
  * Шаблоны писем из classpath:mail/ (HTML + текстовая часть).
  *
- * <p>Подстановка — простые плейсхолдеры `{{name}}` вместо шаблонизатора:
- * письмо одно, зависимость ради него в проект не тянем. Значения для HTML
- * экранируются отдельно от текстовой части, поэтому один и тот же адрес
- * не превращается в «&amp;amp;» в plain-text.
+ * <p>Подстановка — простые плейсхолдеры `{{name}}` вместо шаблонизатора: писем
+ * два (код подтверждения email и код сброса пароля), зависимость ради них в
+ * проект не тянем. Значения для HTML экранируются отдельно от текстовой части,
+ * поэтому один и тот же адрес не превращается в «&amp;amp;» в plain-text.
  */
 @Component
 public class MailTemplates {
 
-    private static final String HTML_TEMPLATE = "mail/verification-code.html";
-    private static final String TEXT_TEMPLATE = "mail/verification-code.txt";
+    private static final String VERIFICATION_HTML = "mail/verification-code.html";
+    private static final String VERIFICATION_TEXT = "mail/verification-code.txt";
+    private static final String PASSWORD_RESET_HTML = "mail/password-reset.html";
+    private static final String PASSWORD_RESET_TEXT = "mail/password-reset.txt";
 
-    private final String htmlTemplate;
-    private final String textTemplate;
+    private final String verificationHtml;
+    private final String verificationText;
+    private final String passwordResetHtml;
+    private final String passwordResetText;
 
     public MailTemplates() {
-        this.htmlTemplate = load(HTML_TEMPLATE);
-        this.textTemplate = load(TEXT_TEMPLATE);
+        this.verificationHtml = load(VERIFICATION_HTML);
+        this.verificationText = load(VERIFICATION_TEXT);
+        this.passwordResetHtml = load(PASSWORD_RESET_HTML);
+        this.passwordResetText = load(PASSWORD_RESET_TEXT);
     }
 
-    /** Готовое письмо с кодом подтверждения. */
-    public record VerificationMail(String subject, String text, String html) {
+    /** Готовое письмо с кодом: тема, текстовая часть и HTML. */
+    public record RenderedMail(String subject, String text, String html) {
     }
 
-    public VerificationMail verificationCode(String code, int expiresMinutes,
-                                             String supportEmail, String recipientEmail) {
+    public RenderedMail verificationCode(String code, int expiresMinutes,
+                                         String supportEmail, String recipientEmail) {
+        // Тема по образцу писем GitHub: бренд в скобках и название действия.
+        // Кода в теме нет — он виден и на локскрине; код живёт в теле письма.
+        return render(verificationHtml, verificationText, "[Ababawa] email verification code",
+                values(code, expiresMinutes, supportEmail, recipientEmail));
+    }
+
+    public RenderedMail passwordReset(String code, int expiresMinutes,
+                                      String supportEmail, String recipientEmail) {
+        return render(passwordResetHtml, passwordResetText, "[Ababawa] password reset code",
+                values(code, expiresMinutes, supportEmail, recipientEmail));
+    }
+
+    private static Map<String, String> values(String code, int expiresMinutes,
+                                              String supportEmail, String recipientEmail) {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("code", code);
         values.put("expires_minutes", Integer.toString(expiresMinutes));
         values.put("support_email", supportEmail);
         values.put("recipient_email", recipientEmail);
+        return values;
+    }
 
+    private static RenderedMail render(String htmlTemplate, String textTemplate, String subject,
+                                       Map<String, String> values) {
         String text = render(textTemplate, values);
         String html = render(htmlTemplate, escape(values));
-        // Тема по образцу писем GitHub: бренд в скобках и название действия.
-        // Кода в теме нет — он виден и на локскрине; код живёт в теле письма.
-        return new VerificationMail("[Ababawa] email verification code", text, html);
+        return new RenderedMail(subject, text, html);
     }
 
     private static String render(String template, Map<String, String> values) {

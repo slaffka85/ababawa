@@ -8,6 +8,7 @@ import {
   getRefreshToken,
   hasRefreshToken,
   humanizeApiError,
+  rememberEmail,
   setTokens,
 } from '../lib/api';
 import type { User } from '../lib/types';
@@ -30,17 +31,36 @@ export interface ResendOutcome {
   message: string | null;
 }
 
+/** Итог запроса кода сброса пароля. */
+export interface ForgotOutcome {
+  ok: boolean;
+  resendIn: number;
+  expiresIn: number;
+  devCode: string | null;
+  message: string | null;
+}
+
+/** Итог смены пароля по коду. */
+export interface ResetOutcome {
+  ok: boolean;
+  message: string | null;
+}
+
 interface AuthState {
   user: User | null;
   status: AuthStatus;
   error: string | null;
   /** Восстановление сессии при загрузке: /me по сохранённым токенам. */
   bootstrap: () => Promise<void>;
-  login: (email: string, password: string) => Promise<LoginOutcome>;
+  login: (email: string, password: string, remember?: boolean) => Promise<LoginOutcome>;
   register: (email: string, displayName: string, password: string) => Promise<boolean>;
   /** Подтверждение кода из письма: единственный путь к токенам после register. */
   verifyEmail: (email: string, code: string) => Promise<boolean>;
   resendCode: (email: string) => Promise<ResendOutcome>;
+  /** Сброс пароля, шаг 1: запросить код на email. */
+  forgotPassword: (email: string) => Promise<ForgotOutcome>;
+  /** Сброс пароля, шаг 2: код + новый пароль. */
+  resetPassword: (email: string, code: string, password: string) => Promise<ResetOutcome>;
   logout: () => Promise<void>;
   patchMe: (patch: { display_name?: string; avatar_url?: string | null }) => Promise<void>;
   setUser: (user: User) => void;
@@ -79,11 +99,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  login: async (email, password) => {
+  login: async (email, password, remember = true) => {
     set({ error: null });
     try {
       const response = await api.auth.login({ email: email.trim(), password });
-      setTokens(response.access_token, response.refresh_token, response.expires_in);
+      setTokens(response.access_token, response.refresh_token, response.expires_in, remember);
+      rememberEmail(email.trim().toLowerCase(), remember);
       set({ user: response.user, status: 'authenticated', error: null });
       void syncPushToken();
       return 'ok';
@@ -120,7 +141,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ error: null });
     try {
       const response = await api.auth.verify({ email: email.trim(), code });
-      setTokens(response.access_token, response.refresh_token, response.expires_in);
+      // Регистрация только что завершена: сессию сохраняем, как при «Запомнить меня».
+      setTokens(response.access_token, response.refresh_token, response.expires_in, true);
       set({ user: response.user, status: 'authenticated', error: null });
       clearPending();
       void syncPushToken();
@@ -145,6 +167,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const details = error instanceof ApiError ? error.details ?? {} : {};
       const resendIn = typeof details.resend_in === 'number' ? details.resend_in : 0;
       return { ok: false, resendIn, expiresIn: 0, devCode: null, message: humanizeApiError(error) };
+    }
+  },
+
+  forgotPassword: async (email) => {
+    try {
+      const response = await api.auth.forgotPassword(email.trim());
+      return {
+        ok: true,
+        resendIn: response.resend_in,
+        expiresIn: response.expires_in,
+        devCode: response.dev_code ?? null,
+        message: null,
+      };
+    } catch (error) {
+      const details = error instanceof ApiError ? error.details ?? {} : {};
+      const resendIn = typeof details.resend_in === 'number' ? details.resend_in : 0;
+      return { ok: false, resendIn, expiresIn: 0, devCode: null, message: humanizeApiError(error) };
+    }
+  },
+
+  resetPassword: async (email, code, password) => {
+    try {
+      await api.auth.resetPassword({ email: email.trim(), code, password });
+      return { ok: true, message: null };
+    } catch (error) {
+      return { ok: false, message: humanizeApiError(error) };
     }
   },
 

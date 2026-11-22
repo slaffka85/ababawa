@@ -7,15 +7,14 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Locale;
-
 /**
- * ВРЕМЕННЫЙ эндпоинт для настройки почты: генерирует код и отправляет письмо
+ * Временный эндпоинт для настройки почты: генерирует код и отправляет письмо
  * на любой адрес синхронно, возвращая результат SMTP-сеанса.
  *
  * <pre>
@@ -24,14 +23,14 @@ import java.util.Locale;
  * 200 {"email": "you@example.com", "code": "483920", "sent": false, "error": "..."}
  * </pre>
  *
- * <p>Удалить после настройки SMTP: этот класс, строку {@code /api/v1/mail/} в
- * {@code AccessTokenFilter.PUBLIC_PREFIXES} и {@code /api/v1/mail/*} в
- * {@code WebFilterConfig}. Доступ повторяет режим ручной отправки кода
- * ({@code abv.email-verification.send-code}): {@code off} — 404, {@code dev} —
- * только вне production, {@code on} — всегда.
+ * <p>Ручка выключена по умолчанию и включается только явным флагом
+ * {@code abv.mail.test-endpoint=true} ({@code ABV_MAIL_TEST_ENDPOINT}): при
+ * выключенном флаге бин не создаётся, и маршрут отвечает 404. Так она остаётся
+ * доступной для диагностики SMTP, но не висит открытой в production.
  */
 @RestController
 @RequestMapping("/api/v1/mail")
+@ConditionalOnProperty(prefix = "abv.mail", name = "test-endpoint", havingValue = "true")
 public class MailTestController {
 
     private static final Logger log = LoggerFactory.getLogger(MailTestController.class);
@@ -63,7 +62,11 @@ public class MailTestController {
 
     /** Пакетный доступ нужен тестам: HTTP-обвязка здесь ничего не добавляет. */
     TestResponse send(String rawEmail) {
-        ensureAvailable();
+        // Вторая линия защиты на случай прямого вызова бина (тесты, будущие
+        // вызовы из кода): даже с созданным контроллером флаг решает всё.
+        if (!props.mail().testEndpoint()) {
+            throw AbvException.notFound("no such endpoint: /api/v1/mail/test");
+        }
 
         String email = rawEmail == null ? "" : rawEmail.strip();
         if (email.isEmpty()) {
@@ -95,15 +98,6 @@ public class MailTestController {
             log.warn("test mail to {} failed ({}:{}): {}",
                     MailAddresses.mask(email), mail.host(), mail.port(), e.toString());
             return new TestResponse(email, code, false, e.toString());
-        }
-    }
-
-    private void ensureAvailable() {
-        String mode = props.emailVerification().sendCode() == null
-                ? "" : props.emailVerification().sendCode().trim().toLowerCase(Locale.ROOT);
-        boolean available = "on".equals(mode) || ("dev".equals(mode) && !props.isProduction());
-        if (!available) {
-            throw AbvException.notFound("no such endpoint: /api/v1/mail/test");
         }
     }
 }

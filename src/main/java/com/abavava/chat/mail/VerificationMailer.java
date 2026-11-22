@@ -29,6 +29,11 @@ public class VerificationMailer {
         return sender.send(compose(email, code));
     }
 
+    /** Письмо со ссылкой на сброс пароля: тот же код, другой текст. */
+    public boolean sendPasswordReset(String email, String code) {
+        return sender.send(composePasswordReset(email, code));
+    }
+
     /**
      * То же письмо, что уходит при регистрации, но без очереди: временный
      * {@code MailTestController} отправляет его синхронно и возвращает результат.
@@ -43,7 +48,17 @@ public class VerificationMailer {
         AbvProperties.Mail mail = props.mail();
         int expiresMinutes = (int) Math.max(1L, props.emailVerification().codeTtl().toMinutes());
 
-        MailTemplates.VerificationMail rendered = templates.verificationCode(
+        MailTemplates.RenderedMail rendered = templates.verificationCode(
+                code, expiresMinutes, mail.supportEmail(), email);
+        return new MailMessage(email, rendered.subject(), rendered.text(), rendered.html());
+    }
+
+    /** Та же вёрстка, но текст про сброс пароля и своя тема. */
+    public MailMessage composePasswordReset(String email, String code) {
+        AbvProperties.Mail mail = props.mail();
+        int expiresMinutes = (int) Math.max(1L, props.emailVerification().codeTtl().toMinutes());
+
+        MailTemplates.RenderedMail rendered = templates.passwordReset(
                 code, expiresMinutes, mail.supportEmail(), email);
         return new MailMessage(email, rendered.subject(), rendered.text(), rendered.html());
     }

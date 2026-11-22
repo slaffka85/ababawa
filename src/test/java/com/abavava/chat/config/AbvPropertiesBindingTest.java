@@ -66,6 +66,7 @@ class AbvPropertiesBindingTest {
         assertThat(props.mail().starttls()).isFalse();
         assertThat(props.mail().ssl()).isFalse();
         assertThat(props.mail().from()).isEqualTo("no-reply@ababawa.local");
+        assertThat(props.mail().testEndpoint()).isFalse();
         assertThat(props.mail().timeout()).isEqualTo(Duration.ofSeconds(10));
 
         assertThat(props.emailVerification().codeLength()).isEqualTo(6);

@@ -65,7 +65,9 @@
 Регистрация двухшаговая: аккаунт создаётся неподтверждённым, на почту уходит
 6-значный код (живёт 15 минут, писем не больше 5 в час), а пара токенов
 появляется только после `/auth/verify`. Письмо собирается шаблоном
-`mail/verification-code.html` (см. `docs/mail/EMAIL-TEMPLATE.md`).
+`mail/verification-code.html` (см. `docs/mail/EMAIL-TEMPLATE.md`). Сброс пароля
+(`/auth/password/forgot` → `/auth/password/reset`) использует ту же схему кодов
+и писем с шаблоном `mail/password-reset.html`.
 
 ### POST `/auth/register`
 ```json
@@ -141,6 +143,43 @@
 
 Предыдущий код гасится: действующим остаётся последний отправленный.
 
+### POST `/auth/password/forgot`
+
+```json
+{ "email": "a@b.c" }
+```
+
+`202` → код отправлен письмом (тема `[Ababawa] password reset code`, та же
+вёрстка, что у письма подтверждения):
+
+```json
+{ "email": "a***@b.c", "expires_in": 900, "resend_in": 60, "dev_code": null }
+```
+
+Ответ одинаков для существующего и неизвестного адреса: неизвестный просто не
+получает письмо (защита от перебора базы). Код и лимиты — из
+`abv.email-verification` (TTL, 5 попыток, пауза и часовой лимит отправок, как у
+`/auth/resend`). `429` `rate_limited` — `details.resend_in` / `details.retry_in`.
+
+### POST `/auth/password/reset`
+
+```json
+{ "email": "a@b.c", "code": "483920", "password": "new-secret123" }
+```
+
+`204` → пароль сменён, все refresh-токены пользователя отозваны (нужно войти
+заново). Пароль — от 8 до 72 байт. Код гасится; предыдущие коды сброса тоже.
+
+| HTTP | code | details | Когда |
+|---|---|---|---|
+| `422` | `validation_failed` | `field: "password"` | пароль короче 8 или длиннее 72 байт |
+| `422` | `validation_failed` | `field: "code"`, `attempts_left` | неверный код |
+| `422` | `validation_failed` | `reason: "expired"` | код истёк или не запрашивался |
+| `422` | `validation_failed` | `reason: "too_many_attempts"` | попытки исчерпаны, код погашен |
+
+Для незарегистрированного адреса — тот же `422` «invalid password reset code»:
+существование аккаунта не раскрывается.
+
 ### POST `/auth/login`
 ```json
 { "email": "a@b.c", "password": "secret123" }
@@ -148,6 +187,11 @@
 `200` → как у verify. `401` при неверных данных (сообщение общее, без раскрытия).
 `403` `forbidden` с `details: { "reason": "email_not_verified", "email": "a@b.c" }`,
 если пароль верный, но почта не подтверждена — клиент уводит на ввод кода.
+
+«Запомнить меня» — решение клиента, а не сервера: refresh-токен живёт
+`refresh-ttl` (30 дней) в любом случае, а клиент выбирает, где его хранить —
+постоянно (localStorage) или до закрытия вкладки (sessionStorage). Сервер об
+этом не знает.
 
 ### POST `/auth/refresh`
 ```json
@@ -197,10 +241,10 @@
 выключена. HTTP-код всегда `200`, когда запрос дошёл до отправки: результат
 разбирается по `sent`/`error`, а не по статусу.
 
-Доступ повторяет режим ручной отправки кода (`abv.email-verification.send-code`,
-`ABV_EMAILVERIFICATION_SENDCODE`): `off` — `404`, `dev` (по умолчанию) — только
-при `ABV_ENV != production`, `on` — всегда. В публичном режиме запросы
-ограничены общим rate-limit (30 в минуту на IP).
+Ручка существует только при `abv.mail.test-endpoint=true`
+(`ABV_MAIL_TEST_ENDPOINT`): по умолчанию и на VPS флаг выключен, контроллер не
+создаётся, маршрут отвечает `404`. `ABV_EMAILVERIFICATION_SENDCODE` на неё не
+влияет. Включённая ручка ограничена общим rate-limit (30 в минуту на IP).
 
 **Временная ручка:** после настройки почты удалите `MailTestController`,
 `/api/v1/mail/` в `AccessTokenFilter` и `/api/v1/mail/*` в `WebFilterConfig`.

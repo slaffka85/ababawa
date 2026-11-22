@@ -53,6 +53,23 @@ public class AuthController {
             @JsonProperty("email") String email) {
     }
 
+    public record ForgotPasswordRequest(
+            @JsonProperty("email") String email) {
+    }
+
+    public record ResetPasswordRequest(
+            @JsonProperty("email") String email,
+            @JsonProperty("code") String code,
+            @JsonProperty("password") String password) {
+    }
+
+    public record ForgotPasswordResponse(
+            @JsonProperty("email") String email,
+            @JsonProperty("expires_in") long expiresIn,
+            @JsonProperty("resend_in") long resendIn,
+            @JsonProperty("dev_code") String devCode) {
+    }
+
     public record ResendResponse(
             @JsonProperty("resend_in") long resendIn,
             @JsonProperty("expires_in") long expiresIn,
@@ -102,6 +119,30 @@ public class AuthController {
         return ResponseEntity.status(202).body(new ResendResponse(
                 result.resendIn().toSeconds(), result.expiresIn().toSeconds(), result.emailQueued(),
                 result.devCode()));
+    }
+
+    /**
+     * Сброс пароля, шаг 1: код на email. Ответ не раскрывает, есть ли такой
+     * адрес: для неизвестного email — тот же 202 и те же поля, просто письма нет.
+     */
+    @PostMapping("/password/forgot")
+    public ResponseEntity<ForgotPasswordResponse> forgotPassword(HttpServletRequest request) {
+        ForgotPasswordRequest body = JsonBody.required(request, ForgotPasswordRequest.class, mapper);
+        PasswordResetService.Requested result = auth.forgotPassword(body.email(), clientIp(request));
+        return ResponseEntity.status(202).body(new ForgotPasswordResponse(
+                result.email(), result.expiresIn().toSeconds(), result.resendIn().toSeconds(),
+                result.devCode()));
+    }
+
+    /**
+     * Сброс пароля, шаг 2: код + новый пароль. 204 без тела; после успеха все
+     * refresh-токены пользователя отозваны, поэтому нужно войти заново.
+     */
+    @PostMapping("/password/reset")
+    public ResponseEntity<Void> resetPassword(HttpServletRequest request) {
+        ResetPasswordRequest body = JsonBody.required(request, ResetPasswordRequest.class, mapper);
+        auth.resetPassword(body.email(), body.code(), body.password());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/login")

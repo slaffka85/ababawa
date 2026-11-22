@@ -52,6 +52,8 @@ services:
       ABV_MAIL_SSL: ${ABV_MAIL_SSL:-false}
       ABV_MAIL_FROM: ${ABV_MAIL_FROM:?Set ABV_MAIL_FROM in .env.production}
       ABV_MAIL_SUPPORT_EMAIL: ${ABV_MAIL_SUPPORT_EMAIL:?Set ABV_MAIL_SUPPORT_EMAIL in .env.production}
+      # Временная ручка настройки SMTP: по умолчанию выключена (404).
+      ABV_MAIL_TEST_ENDPOINT: ${ABV_MAIL_TEST_ENDPOINT:-false}
       # POST /auth/send-code: dev → в production выключен (404), on → публично.
       ABV_EMAILVERIFICATION_SENDCODE: ${ABV_EMAILVERIFICATION_SENDCODE:-dev}
     depends_on:

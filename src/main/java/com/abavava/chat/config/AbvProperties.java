@@ -81,6 +81,7 @@ public record AbvProperties(
             String from,
             String fromName,
             String supportEmail,
+            boolean testEndpoint,
             Duration timeout) {
     }
 

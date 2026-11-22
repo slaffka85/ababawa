@@ -2,7 +2,8 @@
  * Обёртка над fetch для REST API v1 (docs/API.md).
  *
  * Особенности:
- *  - токены: access — в памяти + localStorage (`abv.access`), refresh — в localStorage (`abv.refresh`);
+ *  - токены: access — в памяти + хранилище, refresh — localStorage («Запомнить меня»)
+ *    или sessionStorage (сессия до закрытия вкладки);
  *  - на 401 один раз обновляем access через /auth/refresh и повторяем исходный запрос;
  *  - параллельные 401 не порождают лавину refresh: все ждут один in-flight promise;
  *  - ошибки сервера `{ error: { code, message } }` превращаются в типизированный ApiError.
@@ -17,6 +18,7 @@ import type {
   ConversationView,
   HealthResponse,
   IceConfigResponse,
+  ForgotPasswordResponse,
   Message,
   MessageEnvelope,
   MessagePageResponse,
@@ -131,12 +133,28 @@ let accessToken: string | null = null;
 /** 0 = срок неизвестен (тогда полагаемся на ответ сервера). */
 let accessExpiresAt = 0;
 
-function safeStorage(): Storage | null {
+const EMAIL_KEY = 'abv.last_email';
+
+/**
+ * Хранилище токенов. `remember` выбирает между localStorage (сессия переживает
+ * закрытие браузера) и sessionStorage (живёт до закрытия вкладки) — это и есть
+ * галочка «Запомнить меня».
+ */
+function storage(kind: 'local' | 'session'): Storage | null {
   try {
-    return window.localStorage;
+    return kind === 'local' ? window.localStorage : window.sessionStorage;
   } catch {
     return null;
   }
+}
+
+function readToken(key: string): string | null {
+  return storage('local')?.getItem(key) ?? storage('session')?.getItem(key) ?? null;
+}
+
+function removeToken(key: string): void {
+  storage('local')?.removeItem(key);
+  storage('session')?.removeItem(key);
 }
 
 /** Пытаемся достать exp из JWT, чтобы не хранить отдельный ключ. */
@@ -154,9 +172,7 @@ function readJwtExpiryMs(token: string): number {
 }
 
 function loadStoredTokens(): void {
-  const storage = safeStorage();
-  if (!storage) return;
-  accessToken = storage.getItem(ACCESS_KEY);
+  accessToken = readToken(ACCESS_KEY);
   if (accessToken) accessExpiresAt = readJwtExpiryMs(accessToken);
 }
 
@@ -167,27 +183,64 @@ export function getAccessToken(): string | null {
 }
 
 export function getRefreshToken(): string | null {
-  return safeStorage()?.getItem(REFRESH_KEY) ?? null;
+  return readToken(REFRESH_KEY);
 }
 
 export function hasRefreshToken(): boolean {
   return Boolean(getRefreshToken());
 }
 
-export function setTokens(access: string, refresh: string, expiresInSeconds?: number): void {
-  const storage = safeStorage();
+/** Где сейчас лежит refresh-токен: localStorage — «запомнили», sessionStorage — нет. */
+export function isRemembered(): boolean {
+  return Boolean(storage('local')?.getItem(REFRESH_KEY));
+}
+
+/**
+ * Сохраняет пару токенов.
+ *
+ * @param remember true — localStorage (сессия переживает перезапуск браузера),
+ *                 false — sessionStorage (живёт до закрытия вкладки),
+ *                 undefined — оставить текущее хранилище (например, при refresh).
+ */
+export function setTokens(
+  access: string,
+  refresh: string,
+  expiresInSeconds?: number,
+  remember?: boolean,
+): void {
+  const target = remember === undefined
+    ? (isRemembered() ? storage('local') : storage('session'))
+    : storage(remember ? 'local' : 'session');
   accessToken = access;
   accessExpiresAt = readJwtExpiryMs(access) || (expiresInSeconds ? Date.now() + expiresInSeconds * 1000 : 0);
-  storage?.setItem(ACCESS_KEY, access);
-  storage?.setItem(REFRESH_KEY, refresh);
+  // Переносим токены между хранилищами без «хвостов» в старом.
+  removeToken(ACCESS_KEY);
+  removeToken(REFRESH_KEY);
+  target?.setItem(ACCESS_KEY, access);
+  target?.setItem(REFRESH_KEY, refresh);
 }
 
 export function clearTokens(): void {
-  const storage = safeStorage();
   accessToken = null;
   accessExpiresAt = 0;
-  storage?.removeItem(ACCESS_KEY);
-  storage?.removeItem(REFRESH_KEY);
+  removeToken(ACCESS_KEY);
+  removeToken(REFRESH_KEY);
+}
+
+/** Запоминает email для формы входа (только при включённом «Запомнить меня»). */
+export function rememberEmail(email: string, remember: boolean): void {
+  const local = storage('local');
+  if (!local) return;
+  if (remember) {
+    local.setItem(EMAIL_KEY, email);
+  } else {
+    local.removeItem(EMAIL_KEY);
+  }
+}
+
+/** Последний email, который запомнили при входе ('' — ничего не сохранено). */
+export function readRememberedEmail(): string {
+  return storage('local')?.getItem(EMAIL_KEY) ?? '';
 }
 
 export function isAccessExpired(): boolean {
@@ -412,6 +465,20 @@ export const authApi = {
   /** Повторная отправка кода; 429 приходит с details.resend_in. */
   resend(email: string): Promise<ResendResponse> {
     return request<ResendResponse>('/auth/resend', { method: 'POST', body: { email }, auth: false });
+  },
+
+  /** Сброс пароля, шаг 1: код на email. Ответ одинаков для любого адреса. */
+  forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+    return request<ForgotPasswordResponse>('/auth/password/forgot', {
+      method: 'POST',
+      body: { email },
+      auth: false,
+    });
+  },
+
+  /** Сброс пароля, шаг 2: код + новый пароль. 204; все сессии отзываются. */
+  resetPassword(input: { email: string; code: string; password: string }): Promise<void> {
+    return request<void>('/auth/password/reset', { method: 'POST', body: input, auth: false });
   },
 
   login(input: { email: string; password: string }): Promise<AuthResponse> {

@@ -139,6 +139,16 @@ export interface ResendResponse {
   dev_code?: string | null;
 }
 
+/** Ответ на запрос сброса пароля: одинаков для существующего и неизвестного адреса. */
+export interface ForgotPasswordResponse {
+  /** Замаскированный адрес: a***@example.com */
+  email: string;
+  expires_in: number;
+  resend_in: number;
+  /** Только в development: код продублирован в ответе. */
+  dev_code?: string | null;
+}
+
 export interface UserEnvelope {
   user: User;
 }

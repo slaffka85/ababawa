@@ -69,18 +69,8 @@ class MailTestControllerTest {
     }
 
     @Test
-    void hidesItselfWhenSendCodeIsOff() throws Exception {
-        MailTestController controller = controller(loadProps("abv.email-verification.send-code", "off"));
-
-        assertThatThrownBy(() -> controller.send("tester@example.com"))
-                .isInstanceOf(AbvException.class)
-                .satisfies(error -> assertThat(((AbvException) error).code())
-                        .isEqualTo(AbvException.Code.NOT_FOUND));
-    }
-
-    @Test
-    void hidesItselfWithDevModeInProduction() throws Exception {
-        MailTestController controller = controller(loadProps("abv.env", "production"));
+    void hidesItselfWhenFeatureFlagIsOff() throws Exception {
+        MailTestController controller = controller(loadProps("abv.mail.test-endpoint", "false"));
 
         assertThatThrownBy(() -> controller.send("tester@example.com"))
                 .isInstanceOf(AbvException.class)
@@ -117,6 +107,8 @@ class MailTestControllerTest {
                 .load("application", new ClassPathResource("application.yml"));
         ConfigurationPropertySource base = ConfigurationPropertySources.from(sources).iterator().next();
         Map<String, Object> values = new LinkedHashMap<>();
+        // Флаг включаем точечно: в application.yml ручка по умолчанию выключена.
+        values.put("abv.mail.test-endpoint", "true");
         for (int i = 0; i < overrides.length; i += 2) {
             values.put(overrides[i], overrides[i + 1]);
         }

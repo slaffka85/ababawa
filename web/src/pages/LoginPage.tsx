@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { IconSpinner } from '../components/Icons';
 import { savePending } from '../lib/pending';
+import { readRememberedEmail } from '../lib/api';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -14,8 +15,9 @@ export function LoginPage() {
   const error = useAuthStore((state) => state.error);
   const clearError = useAuthStore((state) => state.clearError);
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => readRememberedEmail());
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -35,7 +37,7 @@ export function LoginPage() {
     if (Object.keys(nextErrors).length > 0) return;
 
     setSubmitting(true);
-    const outcome = await login(email, password);
+    const outcome = await login(email, password, remember);
     setSubmitting(false);
     if (outcome === 'ok') {
       navigate('/', { replace: true });
@@ -53,7 +55,7 @@ export function LoginPage() {
   return (
     <div className="auth">
       <form className="auth__card" onSubmit={handleSubmit} noValidate>
-        <h1 className="auth__title">chat-abavava</h1>
+        <h1 className="auth__title">chat-ababawa</h1>
         <p className="auth__subtitle">Войдите, чтобы продолжить общение</p>
 
         {error ? <p className="auth__error">{error}</p> : null}
@@ -91,6 +93,20 @@ export function LoginPage() {
             <span className="field__hint field__hint--error">{fieldErrors.password}</span>
           ) : null}
         </label>
+
+        <div className="auth__row">
+          <label className="auth__check">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(event) => setRemember(event.target.checked)}
+            />
+            <span>Запомнить меня</span>
+          </label>
+          <Link className="auth__link" to="/forgot-password">
+            Забыли пароль?
+          </Link>
+        </div>
 
         <button type="submit" className="btn btn--primary btn--block" disabled={submitting}>
           {submitting ? <IconSpinner size={18} /> : null}

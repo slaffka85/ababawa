@@ -91,8 +91,7 @@ Content-Type: application/json
 ### 1e. Временный тест почты: код на любой адрес (без аккаунта)
 ### POST /api/v1/mail/test
 ### 200; sent=false и error, если SMTP недоступен или письмо отклонено.
-### 404, если ручка выключена (off или dev в production).
-### Удалить после настройки SMTP.
+### 404, если ручка выключена: ABV_MAIL_TEST_ENDPOINT=false (так по умолчанию).
 POST {{base_url}}/api/v1/mail/test
 Content-Type: application/json
 
@@ -103,6 +102,33 @@ Content-Type: application/json
 > {%
   client.log("Mail test: sent=" + response.body.sent + " | code=" + response.body.code + " | error=" + (response.body.error || "-"));
 %}
+
+### 1f. Сброс пароля, шаг 1: код на email
+### POST /api/v1/auth/password/forgot
+### 202; ответ одинаков для существующего и неизвестного адреса.
+POST {{base_url}}/api/v1/auth/password/forgot
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}"
+}
+
+> {%
+  client.global.set("reset_code", response.body.dev_code || "");
+  client.log("Forgot: resend_in=" + response.body.resend_in + " | dev_code=" + (response.body.dev_code || "-"));
+%}
+
+### 1g. Сброс пароля, шаг 2: код + новый пароль
+### POST /api/v1/auth/password/reset
+### 204; все refresh-токены пользователя отозваны.
+POST {{base_url}}/api/v1/auth/password/reset
+Content-Type: application/json
+
+{
+  "email": "{{verify_email}}",
+  "code": "{{reset_code}}",
+  "password": "new-secret-123"
+}
 
 ### 2. Логин
 ### POST /api/v1/auth/login

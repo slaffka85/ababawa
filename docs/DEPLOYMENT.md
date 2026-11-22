@@ -296,11 +296,19 @@ ABV_EMAILVERIFICATION_SENDCODE=on
 ограничение — rate-limit по IP (30 запросов в минуту) и пауза `resend-cooldown`
 на аккаунт. Включайте осознанно.
 
-### Временный тест почты (удалить после настройки)
+### Временный тест почты (флаг `ABV_MAIL_TEST_ENDPOINT`)
 
-Пока подбираются `ABV_MAIL_*`, удобнее дергать ручку, которой не нужен аккаунт:
-она генерирует код и синхронно отправляет письмо на любой адрес, возвращая
-результат SMTP:
+Ручка `POST /api/v1/mail/test` генерирует код и синхронно отправляет письмо на
+любой адрес, возвращая результат SMTP. Она существует, только когда включён
+флаг:
+
+```dotenv
+ABV_MAIL_TEST_ENDPOINT=true
+```
+
+По умолчанию (и на VPS) флаг выключен: контроллер не создаётся, маршрут
+отвечает `404`. Включайте его на время настройки `ABV_MAIL_*` и выключайте
+обратно — `ABV_EMAILVERIFICATION_SENDCODE` на эту ручку больше не влияет.
 
 ```bash
 curl -sS -X POST https://abavava.tssv85.com/api/v1/mail/test \
@@ -316,11 +324,9 @@ curl -sS -X POST https://abavava.tssv85.com/api/v1/mail/test \
  "error":"java.net.ConnectException: Connection refused"}
 ```
 
-В production ручка по умолчанию **выключена** (`404`): откройте её на время
-настройки тем же `ABV_EMAILVERIFICATION_SENDCODE=on`, что и ручную отправку кода.
-Код в ответе не сохраняется в БД — `/auth/verify` его не примет. После настройки
-почты удалите `MailTestController`, `/api/v1/mail/` из `AccessTokenFilter` и
-`/api/v1/mail/*` из `WebFilterConfig` и верните `ABV_EMAILVERIFICATION_SENDCODE=dev`.
+Флаг читается при старте: после правки `.env.production` пересоздайте контейнер
+(`docker compose ... up -d api`). Код в ответе не сохраняется в БД —
+`/auth/verify` его не примет.
 
 ## GitHub Actions и деплой
 
