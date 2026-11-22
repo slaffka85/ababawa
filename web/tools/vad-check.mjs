@@ -202,11 +202,11 @@ async function main() {
   step('1. Подготовка пользователей и диалога через REST API');
   const userA = await api('/api/v1/auth/register', {
     method: 'POST',
-    body: { email: `vad-a-${suffix}@example.com`, display_name: `VAD A ${suffix}`, password: 'password123' },
+    body: { email: `vad-a-${suffix}@example.com`, nickname: `VAD A ${suffix}`, password: 'password123' },
   });
   const userB = await api('/api/v1/auth/register', {
     method: 'POST',
-    body: { email: `vad-b-${suffix}@example.com`, display_name: `VAD B ${suffix}`, password: 'password123' },
+    body: { email: `vad-b-${suffix}@example.com`, nickname: `VAD B ${suffix}`, password: 'password123' },
   });
   const conversation = await api('/api/v1/conversations', {
     method: 'POST',
@@ -225,7 +225,7 @@ async function main() {
   check('обе страницы загрузили приложение', true);
 
   step('3. Видеозвонок через интерфейс');
-  await pageA.locator('.conv', { hasText: userB.user.display_name }).first().click();
+  await pageA.locator('.conv', { hasText: userB.user.nickname }).first().click();
   await pageA.waitForSelector('button[aria-label="Видеозвонок"]', { timeout: 15_000 });
   await pageA.click('button[aria-label="Видеозвонок"]');
   await pageA.locator('.call-overlay__timer', { hasText: 'Вызываем' }).first().waitFor({ timeout: 20_000 });

@@ -46,7 +46,7 @@ public class ChatRepository {
     static final String MESSAGE_COLUMNS =
             "m.id, m.conversation_id, m.sender_id, m.kind, m.body, m.client_id, m.created_at, m.edited_at, m.deleted_at";
     static final String USER_COLUMNS =
-            "u.id, u.email, u.display_name, u.avatar_url, u.created_at, u.last_seen_at";
+            "u.id, u.email, u.nickname, u.avatar_url, u.created_at, u.last_seen_at";
 
     private static final RowMapper<Conversation> CONVERSATION_MAPPER = (rs, i) -> mapConversation(rs);
     private static final RowMapper<Message> MESSAGE_MAPPER = (rs, i) -> mapMessage(rs);
@@ -96,7 +96,7 @@ public class ChatRepository {
         return new User(
                 rs.getObject("id", UUID.class),
                 rs.getString("email"),
-                rs.getString("display_name"),
+                rs.getString("nickname"),
                 rs.getString("avatar_url"),
                 instant(rs, "created_at"),
                 instant(rs, "last_seen_at"));
@@ -350,7 +350,7 @@ public class ChatRepository {
                           FROM conversation_members cm
                           JOIN users u ON u.id = cm.user_id
                          WHERE cm.conversation_id = ?
-                         ORDER BY lower(u.display_name), u.id""")
+                         ORDER BY lower(u.nickname), u.id""")
                 .param(conversationId)
                 .query(USER_MAPPER)
                 .list();
@@ -367,7 +367,7 @@ public class ChatRepository {
                           JOIN users u ON u.id = cm.user_id
                          WHERE cm.conversation_id IN (""" + placeholders(ids.size()) + """
                         )
-                         ORDER BY cm.conversation_id, lower(u.display_name), u.id""");
+                         ORDER BY cm.conversation_id, lower(u.nickname), u.id""");
         for (UUID id : ids) {
             spec = spec.param(id);
         }

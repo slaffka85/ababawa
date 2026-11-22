@@ -101,7 +101,7 @@ export function CallHistoryPanel({ open, onClose }: CallHistoryPanelProps) {
           {calls.map((call) => {
             const outgoing = call.caller_id === myUserId;
             const outcome = callOutcome(call);
-            const peerName = call.peer?.display_name ?? 'Неизвестный';
+            const peerName = call.peer?.nickname ?? 'Неизвестный';
             return (
               <div key={call.id} className={`call-row call-row--${outcome}`}>
                 <Avatar id={call.peer?.id ?? call.id} name={peerName} size={38} />

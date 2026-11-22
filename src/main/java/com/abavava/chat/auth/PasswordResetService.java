@@ -72,7 +72,7 @@ public class PasswordResetService {
         codes.insert(userId, EmailCodes.hash(pepper(), userId, code), expiresAt, ip);
         codes.purgeExpiredBefore(now.minus(config.codeTtl()));
 
-        boolean queued = mailer.sendPasswordReset(email, code);
+        boolean queued = mailer.sendPasswordReset(account.user().nickname(), email, code);
         if (props.echoVerificationCode()) {
             log.warn("development mode: password reset code {} for {} (not logged in production)",
                     code, Emails.mask(email));

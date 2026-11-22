@@ -41,7 +41,7 @@ public class SeedRunner implements ApplicationRunner {
         this.chats = chats;
     }
 
-    private record DemoUser(String email, String displayName, String password) {
+    private record DemoUser(String email, String nickname, String password) {
     }
 
     private record DemoAccount(User user, boolean created) {
@@ -66,7 +66,7 @@ public class SeedRunner implements ApplicationRunner {
             DemoAccount account = upsert(u);
             ids.add(account.user());
             log.info("seed {} {} <{}> id={}", account.created() ? "created" : "exists",
-                    account.user().displayName(), account.user().email(), account.user().id());
+                    account.user().nickname(), account.user().email(), account.user().id());
         }
 
         for (int i = 0; i < ids.size(); i++) {
@@ -75,7 +75,7 @@ public class SeedRunner implements ApplicationRunner {
                 ConversationView view = result.view();
                 log.info("seed {} direct {} ↔ {} id={}",
                         result.created() ? "created" : "exists",
-                        ids.get(i).displayName(), ids.get(j).displayName(), view.conversation().id());
+                        ids.get(i).nickname(), ids.get(j).nickname(), view.conversation().id());
             }
         }
 
@@ -94,7 +94,7 @@ public class SeedRunner implements ApplicationRunner {
         }
         String password = u.password() == null || u.password().isEmpty() ? DEFAULT_DEMO_PASSWORD : u.password();
         String hash = Passwords.hash(password);
-        User created = users.createAccount(u.email(), u.displayName(), hash);
+        User created = users.createAccount(u.email(), u.nickname(), hash);
         return new DemoAccount(users.markEmailVerified(created.id()), true);
     }
 }

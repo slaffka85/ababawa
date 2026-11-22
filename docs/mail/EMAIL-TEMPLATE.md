@@ -33,10 +33,31 @@
 
 | Плейсхолдер | Пример | Экранирование |
 |---|---|---|
+| `{{nickname}}` | `Аня` | в HTML — `&`, `<`, `>`, `"`, `'`; пустое значение → `there` |
 | `{{code}}` | `483920` | не нужно (только цифры, проверяется на сервере) |
 | `{{expires_minutes}}` | `15` | не нужно |
 | `{{support_email}}` | `support@ababawa.tssv85.com` | в HTML — `&`, `"`, `<`, `'` |
 | `{{recipient_email}}` | `a***@example.com` | в HTML — то же, обязательно |
+
+## Приветствие
+
+Обе буквы начинаются с `Hey, {{nickname}},` — и в HTML (строкой под заголовком),
+и в текстовой части. Никнейм берётся из аккаунта: `EmailVerificationService`
+передаёт его при регистрации и повторной отправке, `PasswordResetService` — при
+сбросе пароля. У ручной ручки `/api/v1/mail/test` аккаунта нет, поэтому в письме
+приветствие `Hey, there,`; пустой никнейм подставляется так же.
+
+## Кодирование частей письма
+
+Обе части (`text/plain` и `text/html`) передаются с
+`Content-Transfer-Encoding: base64` (RFC 2045) и `charset=UTF-8`. Это штатный
+способ провести UTF-8 по SMTP без 8BITMIME: закодировать, разложить по 76
+символов и не зависеть от того, умеет ли релей 8-битные тела. Поэтому в исходнике
+письма («Show original» в Gmail, «Показать источник») части выглядят как base64 —
+это нормально: клиент декодирует их сам и показывает обычный текст и HTML.
+Тема письма и ASCII-заголовки не кодируются, не-ASCII — по RFC 2047 (`=?UTF-8?B?…?=`).
+Проверка: `MimeWriterTest` декодирует обе части, а `MailTemplatesTest` сверяет
+готовый текст.
 
 ## В письме нет ссылок и кнопок
 
@@ -134,8 +155,9 @@ Gmail и Apple Mail:
 # заменить плейсхолдеры на тестовые значения и открыть в браузере
 $src = "src\main\resources\mail\verification-code.html"
 $raw = Get-Content -Raw -Encoding UTF8 $src
+$raw = $raw.Replace('{{nickname}}','Anya')
 $raw = $raw.Replace('{{code}}','483920').Replace('{{expires_minutes}}','15')
-$raw = $raw.Replace('{{support_email}}','support@abavava.tssv85.com')
+$raw = $raw.Replace('{{support_email}}','support@ababawa.tssv85.com')
 $raw = $raw.Replace('{{recipient_email}}','a***@example.com')
 Set-Content -Encoding UTF8 "docs\mail\verification-code.preview.html" $raw
 start "docs\mail\verification-code.preview.html"

@@ -11,7 +11,7 @@ import java.util.UUID;
 public record User(
         @JsonProperty("id") UUID id,
         @JsonProperty("email") String email,
-        @JsonProperty("display_name") String displayName,
+        @JsonProperty("nickname") String nickname,
         @JsonProperty("avatar_url") String avatarUrl,
         @JsonProperty("created_at") Instant createdAt,
         @JsonProperty("last_seen_at") Instant lastSeenAt

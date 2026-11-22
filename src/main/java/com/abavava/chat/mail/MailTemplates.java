@@ -41,23 +41,26 @@ public class MailTemplates {
     public record RenderedMail(String subject, String text, String html) {
     }
 
-    public RenderedMail verificationCode(String code, int expiresMinutes,
+    public RenderedMail verificationCode(String nickname, String code, int expiresMinutes,
                                          String supportEmail, String recipientEmail) {
         // Тема по образцу писем GitHub: бренд в скобках и название действия.
         // Кода в теме нет — он виден и на локскрине; код живёт в теле письма.
         return render(verificationHtml, verificationText, "[Ababawa] email verification code",
-                values(code, expiresMinutes, supportEmail, recipientEmail));
+                values(nickname, code, expiresMinutes, supportEmail, recipientEmail));
     }
 
-    public RenderedMail passwordReset(String code, int expiresMinutes,
+    public RenderedMail passwordReset(String nickname, String code, int expiresMinutes,
                                       String supportEmail, String recipientEmail) {
         return render(passwordResetHtml, passwordResetText, "[Ababawa] password reset code",
-                values(code, expiresMinutes, supportEmail, recipientEmail));
+                values(nickname, code, expiresMinutes, supportEmail, recipientEmail));
     }
 
-    private static Map<String, String> values(String code, int expiresMinutes,
+    private static Map<String, String> values(String nickname, String code, int expiresMinutes,
                                               String supportEmail, String recipientEmail) {
         Map<String, String> values = new LinkedHashMap<>();
+        // Приветствие «Hey, <nickname>,»: для писем без аккаунта (ручной тест)
+        // остаётся нейтральное «there».
+        values.put("nickname", nickname == null || nickname.isBlank() ? "there" : nickname);
         values.put("code", code);
         values.put("expires_minutes", Integer.toString(expiresMinutes));
         values.put("support_email", supportEmail);

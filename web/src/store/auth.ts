@@ -53,7 +53,7 @@ interface AuthState {
   /** Восстановление сессии при загрузке: /me по сохранённым токенам. */
   bootstrap: () => Promise<void>;
   login: (email: string, password: string, remember?: boolean) => Promise<LoginOutcome>;
-  register: (email: string, displayName: string, password: string) => Promise<boolean>;
+  register: (email: string, nickname: string, password: string) => Promise<boolean>;
   /** Подтверждение кода из письма: единственный путь к токенам после register. */
   verifyEmail: (email: string, code: string) => Promise<boolean>;
   resendCode: (email: string) => Promise<ResendOutcome>;
@@ -62,7 +62,7 @@ interface AuthState {
   /** Сброс пароля, шаг 2: код + новый пароль. */
   resetPassword: (email: string, code: string, password: string) => Promise<ResetOutcome>;
   logout: () => Promise<void>;
-  patchMe: (patch: { display_name?: string; avatar_url?: string | null }) => Promise<void>;
+  patchMe: (patch: { nickname?: string; avatar_url?: string | null }) => Promise<void>;
   setUser: (user: User) => void;
   forceSignOut: (reason?: string) => void;
   clearError: () => void;
@@ -115,12 +115,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  register: async (email, displayName, password) => {
+  register: async (email, nickname, password) => {
     set({ error: null });
     try {
       const response = await api.auth.register({
         email: email.trim(),
-        display_name: displayName.trim(),
+        nickname: nickname.trim(),
         password,
       });
       // Токенов нет: аккаунт ждёт код из письма, адрес запоминаем для /verify-email.

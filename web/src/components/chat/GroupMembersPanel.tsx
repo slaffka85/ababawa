@@ -46,10 +46,10 @@ export function GroupMembersPanel({ view, myUserId, onClose, onCall }: GroupMemb
         <div className="modal__body">
           {view.members.map((member) => (
             <div key={member.id} className="member-row">
-              <Avatar id={member.id} name={member.display_name} size={36} />
+              <Avatar id={member.id} name={member.nickname} size={36} />
               <div className="member-row__text">
                 <span className="member-row__name">
-                  {member.display_name}
+                  {member.nickname}
                   {member.id === myUserId ? ' — это вы' : ''}
                 </span>
                 <span className="member-row__email">{member.email}</span>

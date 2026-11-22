@@ -55,7 +55,7 @@ function buildItems(messages: ChatMessage[], members: User[], myUserId: UUID): R
       message,
       isMine,
       showAuthor,
-      authorName: author?.display_name ?? 'Неизвестный',
+      authorName: author?.nickname ?? 'Неизвестный',
     });
     previous = message;
   }

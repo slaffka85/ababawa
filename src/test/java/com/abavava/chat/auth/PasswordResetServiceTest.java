@@ -61,6 +61,8 @@ class PasswordResetServiceTest {
         assertThat(requested.devCode()).matches("\\d{6}");
         assertThat(mailer.calls).isEqualTo(1);
         assertThat(mailer.lastCode).isEqualTo(requested.devCode());
+        // Письмо персонализировано: приветствие берёт никнейм аккаунта.
+        assertThat(mailer.lastNickname).isEqualTo("Аня");
         // В «БД» лежит HMAC, а не сам код.
         assertThat(codes.hash).isNotEqualTo(requested.devCode()).hasSize(64);
     }
@@ -274,6 +276,7 @@ class PasswordResetServiceTest {
     private static final class FakeMailer extends VerificationMailer {
 
         private int calls;
+        private String lastNickname;
         private String lastCode;
 
         FakeMailer() {
@@ -281,8 +284,9 @@ class PasswordResetServiceTest {
         }
 
         @Override
-        public boolean sendPasswordReset(String email, String code) {
+        public boolean sendPasswordReset(String nickname, String email, String code) {
             calls++;
+            lastNickname = nickname;
             lastCode = code;
             return true;
         }

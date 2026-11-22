@@ -33,9 +33,14 @@ public class AuthController {
         this.mapper = mapper;
     }
 
+    /**
+     * {@code display_name} принимается только ради клиентов, закешированных до
+     * переименования поля в {@code nickname}; уходит в API уже одно имя.
+     */
     public record RegisterRequest(
             @JsonProperty("email") String email,
-            @JsonProperty("display_name") String displayName,
+            @JsonProperty("nickname") String nickname,
+            @JsonProperty("display_name") String legacyNickname,
             @JsonProperty("password") String password) {
     }
 
@@ -84,8 +89,9 @@ public class AuthController {
     @PostMapping("/register")
     public ResponseEntity<AuthService.RegisterPending> register(HttpServletRequest request) {
         RegisterRequest body = JsonBody.required(request, RegisterRequest.class, mapper);
+        String nickname = body.nickname() != null ? body.nickname() : body.legacyNickname();
         AuthService.RegisterPending result = auth.register(
-                new AuthService.RegisterInput(body.email(), body.displayName(), body.password()), meta(request));
+                new AuthService.RegisterInput(body.email(), nickname, body.password()), meta(request));
         return ResponseEntity.status(202).body(result);
     }
 

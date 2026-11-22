@@ -34,7 +34,7 @@ public class AuthService {
     private static final int MIN_PASSWORD_LENGTH = 8;
     private static final int MAX_PASSWORD_LENGTH = 72;
     private static final int MAX_LOGIN_LENGTH = 254;
-    private static final int MAX_DISPLAY_NAME = 64;
+    private static final int MAX_NICKNAME = 64;
 
     private final UserRepository users;
     private final RefreshTokenRepository tokens;
@@ -69,7 +69,7 @@ public class AuthService {
     ) {
     }
 
-    public record RegisterInput(String email, String displayName, String password) {
+    public record RegisterInput(String email, String nickname, String password) {
     }
 
     public record LoginInput(String email, String password) {
@@ -80,7 +80,7 @@ public class AuthService {
 
     public RegisterPending register(RegisterInput input, SessionMeta meta) {
         String email = Emails.normalize(input.email());
-        String name = normalizeDisplayName(input.displayName());
+        String name = normalizeNickname(input.nickname());
         //validatePassword(input.password());
         String hash = Passwords.hash(input.password());
         User account = users.createAccount(email, name, hash);
@@ -206,14 +206,14 @@ public class AuthService {
         return login;
     }
 
-    private static String normalizeDisplayName(String raw) {
+    private static String normalizeNickname(String raw) {
         String name = raw == null ? "" : raw.strip().replaceAll("\\s+", " ");
         if (name.isEmpty()) {
-            throw AbvException.invalidField("display_name", "display_name is required");
+            throw AbvException.invalidField("nickname", "nickname is required");
         }
-        if (name.codePointCount(0, name.length()) > MAX_DISPLAY_NAME) {
-            throw AbvException.invalidField("display_name",
-                    "display_name must be at most " + MAX_DISPLAY_NAME + " characters");
+        if (name.codePointCount(0, name.length()) > MAX_NICKNAME) {
+            throw AbvException.invalidField("nickname",
+                    "nickname must be at most " + MAX_NICKNAME + " characters");
         }
         return name;
     }

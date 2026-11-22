@@ -453,7 +453,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
 export const authApi = {
   /** Создаёт аккаунт и просит сервер отправить код: токенов в ответе нет (202). */
-  register(input: { email: string; display_name: string; password: string }): Promise<RegisterPendingResponse> {
+  register(input: { email: string; nickname: string; password: string }): Promise<RegisterPendingResponse> {
     return request<RegisterPendingResponse>('/auth/register', { method: 'POST', body: input, auth: false });
   },
 
@@ -513,14 +513,14 @@ export const authApi = {
     return request<UserEnvelope>('/me');
   },
 
-  patchMe(patch: { display_name?: string; avatar_url?: string | null }): Promise<UserEnvelope> {
+  patchMe(patch: { nickname?: string; avatar_url?: string | null }): Promise<UserEnvelope> {
     return request<UserEnvelope>('/me', { method: 'PATCH', body: patch });
   },
 };
 
 export const usersApi = {
   /**
-   * Поиск по display_name/email, исключая себя.
+   * Поиск по nickname/email, исключая себя.
    * Форма ответа в API.md не зафиксирована: принимаем и `{ items: [...] }`, и голый массив.
    */
   async search(query: string, limit = 20, signal?: AbortSignal): Promise<{ items: User[] }> {

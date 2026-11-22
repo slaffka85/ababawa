@@ -25,7 +25,7 @@
 
 ```jsonc
 // User
-{ "id": "uuid", "email": "a@b.c", "display_name": "Аня", "avatar_url": null,
+{ "id": "uuid", "email": "a@b.c", "nickname": "Аня", "avatar_url": null,
   "created_at": "2025-01-31T12:00:00Z", "last_seen_at": "2025-01-31T12:05:00Z" }
 
 // Message
@@ -71,7 +71,7 @@
 
 ### POST `/auth/register`
 ```json
-{ "email": "a@b.c", "display_name": "Аня", "password": "secret123" }
+{ "email": "a@b.c", "nickname": "Аня", "password": "secret123" }
 ```
 `202` → аккаунт создан, письмо с кодом отправлено (токенов в ответе нет):
 ```json
@@ -87,7 +87,12 @@
 - `dev_code` заполняется **только** при `ABV_ENV=development`, в production
   всегда `null`: код существует исключительно в письме.
 
-Ошибки: `422` (email/display_name невалидны), `409` (email занят).
+Ошибки: `422` (email/nickname невалидны), `409` (email занят).
+
+Профильное поле называется `nickname` (до миграции `0005_nickname.sql` —
+`display_name`): колонка переименована без потери данных. Для клиентов,
+закешированных до переименования, `display_name` ещё принимается на входе
+`/auth/register` и `PATCH /me` как алиас, но в ответах всегда только `nickname`.
 
 ### POST `/auth/verify`
 ```json
@@ -211,7 +216,7 @@
 
 ### PATCH `/me`
 ```json
-{ "display_name": "Аня П.", "avatar_url": "https://..." }
+{ "nickname": "Аня П.", "avatar_url": "https://..." }
 ```
 `200` → `{ "user": User }`
 
@@ -253,7 +258,7 @@
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/users?q=<подстрока>&limit=20` | поиск по `display_name`/`email`, исключая себя |
+| GET | `/users?q=<подстрока>&limit=20` | поиск по `nickname`/`email`, исключая себя |
 | GET | `/users/{id}` | профиль; `404`, если нет |
 
 ## Диалоги

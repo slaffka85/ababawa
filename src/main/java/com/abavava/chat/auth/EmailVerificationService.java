@@ -75,7 +75,7 @@ public class EmailVerificationService {
                 user.id(), user.email(), EmailCodes.hash(pepper(), user.id(), code), expiresAt, ip);
         codes.purgeExpiredBefore(now.minus(config.codeTtl()));
 
-        boolean queued = mailer.sendCode(user.email(), code);
+        boolean queued = mailer.sendCode(user.nickname(), user.email(), code);
         if (props.echoVerificationCode()) {
             log.warn("development mode: verification code {} for {} (not logged in production)",
                     code, Emails.mask(user.email()));

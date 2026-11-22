@@ -82,7 +82,8 @@ public class MailTestController {
             return new TestResponse(email, code, false, "abv.mail.enabled=false");
         }
 
-        MailMessage message = mailer.compose(email, code);
+        // Письмо на любой адрес: аккаунта нет, поэтому приветствие нейтральное.
+        MailMessage message = mailer.compose("there", email, code);
         byte[] raw = MimeWriter.build(mail.fromName(), mail.from(), email,
                 message.subject(), message.text(), message.html());
         try {

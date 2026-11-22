@@ -1,3 +1,5 @@
+Hey, {{nickname}},
+
 Please verify your email address.
 
 Here is your Ababawa email verification code:

@@ -3,7 +3,7 @@
 #@refresh_token =
 
 ### ============================================
-### chat-abavava-java — HTTP Client
+### ababawa — HTTP Client
 ###
 ### IntelliJ IDEA HTTP Client для вызова API.
 ###
@@ -32,7 +32,7 @@ Content-Type: application/json
 
 {
   "email": "kostik.pankratov.2022@mail.ru",
-  "display_name": "kostik.pankratov.2022",
+  "nickname": "kostik.pankratov.2022",
   "password": "1"
 }
 
@@ -194,7 +194,7 @@ Content-Type: application/json
 Authorization: Bearer {{access_token}}
 
 {
-  "display_name": "New Name"
+  "nickname": "New Name"
 }
 
 ### 7. Список пользователей

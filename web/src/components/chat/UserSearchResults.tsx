@@ -62,10 +62,10 @@ export function UserSearchResults({ results, loading, error, onOpened }: UserSea
           className="conv conv--user"
           onClick={() => void openDirectConversation(user, onOpened)}
         >
-          <Avatar id={user.id} name={user.display_name} />
+          <Avatar id={user.id} name={user.nickname} />
           <span className="conv__main">
             <span className="conv__row">
-              <span className="conv__title">{user.display_name}</span>
+              <span className="conv__title">{user.nickname}</span>
             </span>
             <span className="conv__row">
               <span className="conv__preview">{user.email}</span>

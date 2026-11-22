@@ -58,6 +58,8 @@ class EmailVerificationServiceTest {
         assertThat(issued.emailQueued()).isTrue();
         assertThat(mailer.lastCode).isEqualTo(issued.code());
         assertThat(mailer.lastEmail).isEqualTo(EMAIL);
+        // В письме приветствие по никнейму аккаунта.
+        assertThat(mailer.lastNickname).isEqualTo("Аня");
         // В «БД» лежит HMAC, а не сам код.
         assertThat(codes.hash).isNotEqualTo(issued.code()).hasSize(64);
     }
@@ -320,6 +322,7 @@ class EmailVerificationServiceTest {
     private static final class FakeMailer extends VerificationMailer {
 
         private int calls;
+        private String lastNickname;
         private String lastEmail;
         private String lastCode;
 
@@ -328,8 +331,9 @@ class EmailVerificationServiceTest {
         }
 
         @Override
-        public boolean sendCode(String email, String code) {
+        public boolean sendCode(String nickname, String email, String code) {
             calls++;
+            lastNickname = nickname;
             lastEmail = email;
             lastCode = code;
             return true;

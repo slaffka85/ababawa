@@ -14,7 +14,7 @@ export type Timestamp = string;
 export interface User {
   id: UUID;
   email: string;
-  display_name: string;
+  nickname: string;
   avatar_url: string | null;
   created_at: Timestamp;
   last_seen_at: Timestamp | null;

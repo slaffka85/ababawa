@@ -139,7 +139,7 @@ async function registerUser(label) {
   const email = `signaling-check-${RUN_ID}-${label}@example.com`;
   const response = await api('/auth/register', {
     method: 'POST',
-    body: { email, display_name: `SigCheck ${label} ${RUN_ID}`, password: PASSWORD },
+    body: { email, nickname: `SigCheck ${label} ${RUN_ID}`, password: PASSWORD },
   });
   return { label, email, user: response.user, accessToken: response.access_token };
 }
@@ -242,7 +242,7 @@ async function main() {
     const itemA = listA.items.find((item) => item.id === callId);
     const itemB = listB.items.find((item) => item.id === callId);
     check('A: звонок в истории, терминальный, принятый', Boolean(itemA) && itemA.status === 'ended' && Boolean(itemA.answered_at),
-      itemA ? `status=${itemA.status}, duration=${itemA.duration_seconds}s, peer=${itemA.peer.display_name}` : 'не найден');
+      itemA ? `status=${itemA.status}, duration=${itemA.duration_seconds}s, peer=${itemA.peer.nickname}` : 'не найден');
     check('B: звонок в истории, терминальный', Boolean(itemB) && itemB.status === 'ended',
       itemB ? `status=${itemB.status}, duration=${itemB.duration_seconds}s` : 'не найден');
 

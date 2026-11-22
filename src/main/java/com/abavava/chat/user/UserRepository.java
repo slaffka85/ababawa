@@ -26,7 +26,7 @@ public class UserRepository implements UserLookup {
 
     private final JdbcClient jdbc;
 
-    static final String USER_COLUMNS = "id, email, display_name, avatar_url, created_at, last_seen_at";
+    static final String USER_COLUMNS = "id, email, nickname, avatar_url, created_at, last_seen_at";
 
     private static final RowMapper<User> MAPPER = (rs, rowNum) -> mapUser(rs);
 
@@ -34,7 +34,7 @@ public class UserRepository implements UserLookup {
         return new User(
                 rs.getObject("id", UUID.class),
                 rs.getString("email"),
-                rs.getString("display_name"),
+                rs.getString("nickname"),
                 rs.getString("avatar_url"),
                 instant(rs, "created_at"),
                 instant(rs, "last_seen_at"));
@@ -46,12 +46,12 @@ public class UserRepository implements UserLookup {
     }
 
     /** Создаёт пользователя; повторный email → 409 conflict. */
-    public User createAccount(String email, String displayName, String passwordHash) {
+    public User createAccount(String email, String nickname, String passwordHash) {
         try {
-            return jdbc.sql("INSERT INTO users (email, display_name, password_hash) VALUES (?, ?, ?) RETURNING "
+            return jdbc.sql("INSERT INTO users (email, nickname, password_hash) VALUES (?, ?, ?) RETURNING "
                             + USER_COLUMNS)
                     .param(email)
-                    .param(displayName)
+                    .param(nickname)
                     .param(passwordHash)
                     .query(MAPPER)
                     .single();
@@ -95,8 +95,8 @@ public class UserRepository implements UserLookup {
         return jdbc.sql("SELECT " + USER_COLUMNS + "\n"
                         + "FROM users\n"
                         + "WHERE id <> ?\n"
-                        + "  AND (? = '' OR display_name ILIKE '%' || ? || '%' OR email ILIKE '%' || ? || '%')\n"
-                        + "ORDER BY lower(display_name), id\n"
+                        + "  AND (? = '' OR nickname ILIKE '%' || ? || '%' OR email ILIKE '%' || ? || '%')\n"
+                        + "ORDER BY lower(nickname), id\n"
                         + "LIMIT ?")
                 .param(excludeId)
                 .param(q)
@@ -108,13 +108,13 @@ public class UserRepository implements UserLookup {
     }
 
     /** Обновление профиля: null-поля остаются без изменений, пустой avatar_url очищает. */
-    public User updateProfile(UUID id, String displayName, boolean avatarProvided, String avatarUrl) {
+    public User updateProfile(UUID id, String nickname, boolean avatarProvided, String avatarUrl) {
         Optional<User> updated = jdbc.sql("UPDATE users\n"
-                        + "   SET display_name = COALESCE(?, display_name),\n"
+                        + "   SET nickname = COALESCE(?, nickname),\n"
                         + "       avatar_url   = CASE WHEN ? THEN ? ELSE avatar_url END\n"
                         + " WHERE id = ?\n"
                         + " RETURNING " + USER_COLUMNS)
-                .param(displayName)
+                .param(nickname)
                 .param(avatarProvided)
                 .param(avatarUrl)
                 .param(id)
