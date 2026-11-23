@@ -82,6 +82,14 @@ management:
     # Prometheus, даже если они случайно попадут в одну джобу.
     tags:
       application: ababawa
+    distribution:
+      # Гистограммы по HTTP-запросам. Без них Micrometer отдаёт только
+      # _count/_sum/_max, и histogram_quantile() в Grafana (панели «API: p95
+      # задержки» и «p95 по эндпоинтам») считать не из чего, а алерт
+      # AbabawaApiLatencyHigh в стеке monitoring не может сработать вообще.
+      # Цена — несколько дополнительных рядов _bucket{le} на каждый uri.
+      percentiles-histogram:
+        http.server.requests: true
   prometheus:
     metrics:
       export:
