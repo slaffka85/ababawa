@@ -4,8 +4,10 @@ import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.domain.User;
 import com.abavava.chat.mail.VerificationMailer;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.EmailCodes;
 import com.abavava.chat.user.UserRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -37,6 +39,7 @@ class EmailVerificationServiceTest {
     private FakeCodes codes;
     private FakeUsers users;
     private FakeMailer mailer;
+    private SimpleMeterRegistry registry;
     private EmailVerificationService service;
 
     @BeforeEach
@@ -45,7 +48,8 @@ class EmailVerificationServiceTest {
         codes = new FakeCodes();
         users = new FakeUsers(new UserRepository.Account(user(), "$2a$12$hash", false));
         mailer = new FakeMailer();
-        service = new EmailVerificationService(codes, users, mailer, props);
+        registry = new SimpleMeterRegistry();
+        service = new EmailVerificationService(codes, users, mailer, props, new BusinessMetrics(registry));
     }
 
     @Test
@@ -211,6 +215,57 @@ class EmailVerificationServiceTest {
         assertThat(service.verify(EMAIL, resent.devCode()).id()).isEqualTo(USER_ID);
     }
 
+    // ------------------------------------------------------------------ метрики
+
+    @Test
+    void countsIssuedCodeAndSuccessfulVerification() {
+        EmailVerificationService.Issued issued = service.issue(user(), "127.0.0.1");
+
+        service.verify(EMAIL, issued.code());
+
+        assertThat(counter("ababawa.auth.otp.requests",
+                "purpose", "registration", "result", "success", "reason", "none")).isEqualTo(1.0);
+        assertThat(counter("ababawa.auth.otp.verifications",
+                "purpose", "email_verify", "result", "success", "reason", "none")).isEqualTo(1.0);
+    }
+
+    @Test
+    void labelsFailedVerificationWithBoundedReason() {
+        EmailVerificationService.Issued issued = service.issue(user(), "127.0.0.1");
+        String wrong = issued.code().equals("000000") ? "111111" : "000000";
+
+        assertThatThrownBy(() -> service.verify(EMAIL, wrong)).isInstanceOf(AbvException.class);
+
+        assertThat(counter("ababawa.auth.otp.verifications",
+                "purpose", "email_verify", "result", "failure", "reason", "invalid_code")).isEqualTo(1.0);
+        // Успеха не было: счётчик успешных проверок не создан вовсе.
+        assertThat(registry.find("ababawa.auth.otp.verifications")
+                .tags("purpose", "email_verify", "result", "success").counter()).isNull();
+    }
+
+    @Test
+    void labelsRateLimitedResendAndUnknownAddress() {
+        service.issue(user(), "127.0.0.1");
+        codes.backdate(Instant.now().minusSeconds(10));
+
+        assertThatThrownBy(() -> service.resend(EMAIL, "127.0.0.1"))
+                .isInstanceOf(AbvException.class);
+
+        users.account = null;
+        EmailVerificationService.Resent unknown = service.resend("nobody@example.com", "127.0.0.1");
+
+        assertThat(unknown.emailQueued()).isFalse();
+        assertThat(counter("ababawa.auth.otp.requests",
+                "purpose", "resend", "result", "failure", "reason", "rate_limited")).isEqualTo(1.0);
+        assertThat(counter("ababawa.auth.otp.requests",
+                "purpose", "resend", "result", "failure", "reason", "unknown_email")).isEqualTo(1.0);
+    }
+
+    private double counter(String name, String... tags) {
+        var counter = registry.find(name).tags(tags).counter();
+        return counter == null ? 0.0 : counter.count();
+    }
+
     private static User user() {
         return new User(USER_ID, EMAIL, "Аня", null, Instant.parse("2026-01-01T00:00:00Z"), null);
     }
@@ -327,7 +382,7 @@ class EmailVerificationServiceTest {
         private String lastCode;
 
         FakeMailer() {
-            super(null, null, null);
+            super(null, null, null, null);
         }
 
         @Override

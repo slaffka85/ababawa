@@ -4,8 +4,10 @@ import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.domain.User;
 import com.abavava.chat.mail.VerificationMailer;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.Passwords;
 import com.abavava.chat.user.UserRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -39,6 +41,7 @@ class PasswordResetServiceTest {
     private FakeUsers users;
     private FakeTokens tokens;
     private FakeMailer mailer;
+    private SimpleMeterRegistry registry;
     private PasswordResetService service;
 
     @BeforeEach
@@ -48,7 +51,8 @@ class PasswordResetServiceTest {
         users = new FakeUsers(new UserRepository.Account(user(), OLD_HASH, true));
         tokens = new FakeTokens();
         mailer = new FakeMailer();
-        service = new PasswordResetService(codes, users, tokens, mailer, props);
+        registry = new SimpleMeterRegistry();
+        service = new PasswordResetService(codes, users, tokens, mailer, props, new BusinessMetrics(registry));
     }
 
     @Test
@@ -149,6 +153,42 @@ class PasswordResetServiceTest {
                     assertThat(e.details()).containsKey("resend_in");
                 });
         assertThat(mailer.calls).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------ метрики
+
+    @Test
+    void countsRequestAndSuccessfulReset() {
+        PasswordResetService.Requested requested = service.request(EMAIL, "127.0.0.1");
+
+        service.reset(EMAIL, requested.devCode(), "new-password-1");
+
+        assertThat(counter("ababawa.auth.otp.requests",
+                "purpose", "password_reset", "result", "success", "reason", "none")).isEqualTo(1.0);
+        assertThat(counter("ababawa.auth.otp.verifications",
+                "purpose", "password_reset", "result", "success", "reason", "none")).isEqualTo(1.0);
+    }
+
+    @Test
+    void labelsExpiredCodeAndRateLimitedRequest() {
+        PasswordResetService.Requested requested = service.request(EMAIL, "127.0.0.1");
+        codes.expire();
+
+        assertThatThrownBy(() -> service.reset(EMAIL, requested.devCode(), "new-password-1"))
+                .isInstanceOf(AbvException.class);
+        assertThat(counter("ababawa.auth.otp.verifications",
+                "purpose", "password_reset", "result", "failure", "reason", "expired")).isEqualTo(1.0);
+
+        codes.backdate(Instant.now().minusSeconds(5));
+        assertThatThrownBy(() -> service.request(EMAIL, "127.0.0.1"))
+                .isInstanceOf(AbvException.class);
+        assertThat(counter("ababawa.auth.otp.requests",
+                "purpose", "password_reset", "result", "failure", "reason", "rate_limited")).isEqualTo(1.0);
+    }
+
+    private double counter(String name, String... tags) {
+        var counter = registry.find(name).tags(tags).counter();
+        return counter == null ? 0.0 : counter.count();
     }
 
     private static User user() {
@@ -280,7 +320,7 @@ class PasswordResetServiceTest {
         private String lastCode;
 
         FakeMailer() {
-            super(null, null, null);
+            super(null, null, null, null);
         }
 
         @Override

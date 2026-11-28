@@ -1,6 +1,7 @@
 package com.abavava.chat.http;
 
 import com.abavava.chat.config.AbvProperties;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.JwtService;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -30,10 +31,28 @@ public class WebFilterConfig {
         return bean;
     }
 
+    /**
+     * Единственный источник IP клиента для rate limit'а, бизнес-логики и
+     * сохранения сессий: доверяет forwarded-заголовкам только от сетей
+     * abv.trusted-proxies. Опечатка в списке сетей роняет старт контекста.
+     */
     @Bean
-    public FilterRegistrationBean<AuthRateLimitFilter> authRateLimitFilter(AbvProperties props, ObjectMapper mapper) {
+    public ClientIpResolver clientIpResolver(AbvProperties props) {
+        try {
+            return ClientIpResolver.parse(props.trustedProxies());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(
+                    "abv.trusted-proxies (ABV_TRUSTED_PROXIES) is invalid: " + e.getMessage(), e);
+        }
+    }
+
+    @Bean
+    public FilterRegistrationBean<AuthRateLimitFilter> authRateLimitFilter(AbvProperties props,
+                                                                           ObjectMapper mapper,
+                                                                           ClientIpResolver clientIp,
+                                                                           BusinessMetrics metrics) {
         FilterRegistrationBean<AuthRateLimitFilter> bean =
-                new FilterRegistrationBean<>(new AuthRateLimitFilter(props, mapper));
+                new FilterRegistrationBean<>(new AuthRateLimitFilter(props, mapper, clientIp, metrics));
         // /api/v1/mail/* — временный тест почты: шлёт письмо на любой адрес,
         // поэтому ограничен тем же окном, что и /auth/*.
         bean.addUrlPatterns("/api/v1/auth/*", "/api/v1/mail/*");
@@ -42,9 +61,11 @@ public class WebFilterConfig {
     }
 
     @Bean
-    public FilterRegistrationBean<AccessTokenFilter> accessTokenFilter(JwtService jwtService, ObjectMapper mapper) {
+    public FilterRegistrationBean<AccessTokenFilter> accessTokenFilter(JwtService jwtService,
+                                                                       ObjectMapper mapper,
+                                                                       BusinessMetrics metrics) {
         FilterRegistrationBean<AccessTokenFilter> bean =
-                new FilterRegistrationBean<>(new AccessTokenFilter(jwtService, mapper));
+                new FilterRegistrationBean<>(new AccessTokenFilter(jwtService, mapper, metrics));
         bean.addUrlPatterns("/api/v1/*");
         bean.setOrder(40);
         return bean;

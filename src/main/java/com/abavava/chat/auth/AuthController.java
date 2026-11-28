@@ -1,5 +1,6 @@
 package com.abavava.chat.auth;
 
+import com.abavava.chat.http.ClientIpResolver;
 import com.abavava.chat.http.JsonBody;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,10 +28,12 @@ public class AuthController {
 
     private final AuthService auth;
     private final ObjectMapper mapper;
+    private final ClientIpResolver clientIpResolver;
 
-    public AuthController(AuthService auth, ObjectMapper mapper) {
+    public AuthController(AuthService auth, ObjectMapper mapper, ClientIpResolver clientIpResolver) {
         this.auth = auth;
         this.mapper = mapper;
+        this.clientIpResolver = clientIpResolver;
     }
 
     /**
@@ -171,14 +174,14 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
-    private static AuthService.SessionMeta meta(HttpServletRequest request) {
+    private AuthService.SessionMeta meta(HttpServletRequest request) {
         return new AuthService.SessionMeta(
                 truncate(request.getHeader("User-Agent"), MAX_USER_AGENT),
-                truncate(clientIp(request), MAX_IP));
+                clientIp(request));
     }
 
-    private static String clientIp(HttpServletRequest request) {
-        return truncate(com.abavava.chat.http.Httpx.clientIp(request), MAX_IP);
+    private String clientIp(HttpServletRequest request) {
+        return truncate(clientIpResolver.resolve(request), MAX_IP);
     }
 
     private static String truncate(String value, int max) {

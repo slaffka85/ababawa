@@ -13,8 +13,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Общие помощники HTTP-слоя: единый формат ошибок, IP клиента, проверка
- * Origin (та же логика, что httpx.OriginAllowed в Go) и извлечение токена.
+ * Общие помощники HTTP-слоя: единый формат ошибок, проверка Origin (та же
+ * логика, что httpx.OriginAllowed в Go) и извлечение токена.
+ *
+ * <p>IP клиента определяется не здесь, а {@link ClientIpResolver}: он учитывает
+ * доверенные reverse proxy и не верит заголовкам от прямых соединений.
  */
 public final class Httpx {
 
@@ -53,19 +56,6 @@ public final class Httpx {
     public static void writeError(HttpServletResponse response, AbvException e, ObjectMapper mapper)
             throws IOException {
         writeJson(response, e.code().httpStatus(), envelope(e), mapper);
-    }
-
-    /** IP клиента: X-Forwarded-For (первый адрес) либо RemoteAddr без порта. */
-    public static String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            String first = (comma >= 0 ? forwarded.substring(0, comma) : forwarded).trim();
-            if (!first.isEmpty()) {
-                return first;
-            }
-        }
-        return hostOnly(request.getRemoteAddr());
     }
 
     /** host:port → host (IPv6-литералы в скобках сохраняются). */

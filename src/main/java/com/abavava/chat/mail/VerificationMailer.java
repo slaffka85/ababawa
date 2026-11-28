@@ -1,6 +1,7 @@
 package com.abavava.chat.mail;
 
 import com.abavava.chat.config.AbvProperties;
+import com.abavava.chat.observability.BusinessMetrics;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,21 +18,28 @@ public class VerificationMailer {
     private final MailTemplates templates;
     private final SmtpMailSender sender;
     private final AbvProperties props;
+    private final BusinessMetrics metrics;
 
-    public VerificationMailer(MailTemplates templates, SmtpMailSender sender, AbvProperties props) {
+    public VerificationMailer(MailTemplates templates, SmtpMailSender sender, AbvProperties props,
+                              BusinessMetrics metrics) {
         this.templates = templates;
         this.sender = sender;
         this.props = props;
+        this.metrics = metrics;
     }
 
     /** @return true, если письмо принято к отправке (не «доставлено»). */
     public boolean sendCode(String nickname, String email, String code) {
-        return sender.send(compose(nickname, email, code));
+        boolean queued = sender.send(compose(nickname, email, code));
+        metrics.otpEmail("verification", queued ? BusinessMetrics.SUCCESS : BusinessMetrics.FAILURE);
+        return queued;
     }
 
     /** Письмо со ссылкой на сброс пароля: тот же код, другой текст. */
     public boolean sendPasswordReset(String nickname, String email, String code) {
-        return sender.send(composePasswordReset(nickname, email, code));
+        boolean queued = sender.send(composePasswordReset(nickname, email, code));
+        metrics.otpEmail("password_reset", queued ? BusinessMetrics.SUCCESS : BusinessMetrics.FAILURE);
+        return queued;
     }
 
     /**

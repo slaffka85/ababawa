@@ -74,6 +74,16 @@ ssh -N -L 3001:127.0.0.1:3001 deploy@<VPS_HOST>
 ретеншен — в README стека monitoring. Приложение не знает про Loki: чтобы сменить
 хранилище логов, достаточно переконфигурировать Alloy.
 
+### Метрики
+
+`GET /actuator/prometheus` (только loopback, наружу не публикуется) отдаёт
+метрики Prometheus: HTTP-запросы, JVM, HikariCP и бизнес-счётчики `ababawa_*` —
+регистрации, OTP, входы, звонки и signaling, rate limit, отказы доступа.
+Панели — дашборд «ababawa / Business & Abuse» в Grafana стека monitoring, алерты
+— группа `ababawa-business` в `prometheus/rules/ababawa.yml`. Каталог метрик,
+правила меток и PromQL, а также модель доверия к `X-Forwarded-For` —
+[`docs/METRICS.md`](docs/METRICS.md).
+
 ### Web
 
 ```powershell

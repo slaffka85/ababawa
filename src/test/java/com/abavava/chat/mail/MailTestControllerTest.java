@@ -2,6 +2,8 @@ package com.abavava.chat.mail;
 
 import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
+import com.abavava.chat.observability.BusinessMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -92,8 +94,10 @@ class MailTestControllerTest {
     }
 
     private static MailTestController controller(AbvProperties props) {
-        SmtpMailSender sender = new SmtpMailSender(props);
-        return new MailTestController(props, new VerificationMailer(new MailTemplates(), sender, props));
+        BusinessMetrics metrics = new BusinessMetrics(new SimpleMeterRegistry());
+        SmtpMailSender sender = new SmtpMailSender(props, metrics);
+        return new MailTestController(props,
+                new VerificationMailer(new MailTemplates(), sender, props, metrics));
     }
 
     private static int closedPort() throws IOException {

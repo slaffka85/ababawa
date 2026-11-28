@@ -27,6 +27,7 @@ public record AbvProperties(
         Duration refreshTtl,
         Duration callRingTimeout,
         String allowedOrigins,
+        String trustedProxies,
         String logLevel,
         boolean migrateOnStart,
         boolean seed,
@@ -126,6 +127,15 @@ public record AbvProperties(
 
     public List<String> allowedOriginList() {
         return splitCsv(allowedOrigins);
+    }
+
+    /**
+     * Доверенные reverse proxy (IP и CIDR): только их forwarded-заголовкам верит
+     * {@code ClientIpResolver}. Список разбирается при сборке контекста, поэтому
+     * опечатка в {@code abv.trusted-proxies} роняет старт, а не подмену IP.
+     */
+    public List<String> trustedProxyList() {
+        return splitCsv(trustedProxies);
     }
 
     public List<String> stunUrlList() {

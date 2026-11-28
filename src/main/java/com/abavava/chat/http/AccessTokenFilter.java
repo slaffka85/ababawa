@@ -1,6 +1,7 @@
 package com.abavava.chat.http;
 
 import com.abavava.chat.domain.AbvException;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.JwtService;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -17,6 +18,10 @@ import java.util.UUID;
 /**
  * Проверка Bearer access-токена на защищённых роутах: кладёт id пользователя
  * в атрибут запроса (см. Httpx.USER_ID_ATTRIBUTE). Аналог auth.Middleware в Go.
+ *
+ * <p>Отказы считаются в {@code ababawa_security_access_denied_total}
+ * (channel=http): частые отказы на защищённых эндпоинтах — признак перебора
+ * токенов.
  */
 public class AccessTokenFilter implements Filter {
 
@@ -32,10 +37,12 @@ public class AccessTokenFilter implements Filter {
 
     private final JwtService jwtService;
     private final ObjectMapper mapper;
+    private final BusinessMetrics metrics;
 
-    public AccessTokenFilter(JwtService jwtService, ObjectMapper mapper) {
+    public AccessTokenFilter(JwtService jwtService, ObjectMapper mapper, BusinessMetrics metrics) {
         this.jwtService = jwtService;
         this.mapper = mapper;
+        this.metrics = metrics;
     }
 
     @Override
@@ -51,6 +58,7 @@ public class AccessTokenFilter implements Filter {
 
         String token = Httpx.bearerToken(req);
         if (token == null) {
+            metrics.accessDenied("http", "missing_token");
             Httpx.writeError(res, AbvException.unauthorized("authorization header is missing"), mapper);
             return;
         }
@@ -58,6 +66,7 @@ public class AccessTokenFilter implements Filter {
             UUID userId = jwtService.verifyAccessToken(token);
             req.setAttribute(Httpx.USER_ID_ATTRIBUTE, userId);
         } catch (AbvException e) {
+            metrics.accessDenied("http", "invalid_token");
             Httpx.writeError(res, e, mapper);
             return;
         }

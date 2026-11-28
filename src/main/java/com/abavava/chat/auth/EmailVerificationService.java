@@ -4,6 +4,7 @@ import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.domain.User;
 import com.abavava.chat.mail.VerificationMailer;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.EmailCodes;
 import com.abavava.chat.user.UserRepository;
 import org.slf4j.Logger;
@@ -44,13 +45,16 @@ public class EmailVerificationService {
     private final UserRepository users;
     private final VerificationMailer mailer;
     private final AbvProperties props;
+    private final BusinessMetrics metrics;
 
     public EmailVerificationService(EmailVerificationRepository codes, UserRepository users,
-                                    VerificationMailer mailer, AbvProperties props) {
+                                    VerificationMailer mailer, AbvProperties props,
+                                    BusinessMetrics metrics) {
         this.codes = codes;
         this.users = users;
         this.mailer = mailer;
         this.props = props;
+        this.metrics = metrics;
     }
 
     /** Выпущенный код. {@code code} отдаётся наружу только в development. */
@@ -63,6 +67,10 @@ public class EmailVerificationService {
 
     /** Новый код для только что созданного (или ещё не подтверждённого) аккаунта. */
     public Issued issue(User user, String ip) {
+        return issue(user, ip, "registration");
+    }
+
+    private Issued issue(User user, String ip, String purpose) {
         AbvProperties.EmailVerification config = props.emailVerification();
         Instant now = Instant.now();
 
@@ -76,6 +84,7 @@ public class EmailVerificationService {
         codes.purgeExpiredBefore(now.minus(config.codeTtl()));
 
         boolean queued = mailer.sendCode(user.nickname(), user.email(), code);
+        otpRequest(purpose, queued, BusinessMetrics.NO_REASON);
         if (props.echoVerificationCode()) {
             log.warn("development mode: verification code {} for {} (not logged in production)",
                     code, Emails.mask(user.email()));
@@ -99,16 +108,23 @@ public class EmailVerificationService {
         UserRepository.Account account = users.accountByEmail(email);
         if (account == null) {
             log.info("resend requested for unknown address {}", Emails.mask(email));
+            otpRequest("resend", false, "unknown_email");
             return new Resent(config.codeTtl(), config.resendCooldown(), false, null);
         }
         if (account.emailVerified()) {
+            otpRequest("resend", false, "already_verified");
             throw alreadyVerified();
         }
 
-        enforceCooldown(account.user().id(), config);
-        enforceHourlyCap(account.user().id(), config);
+        try {
+            enforceCooldown(account.user().id(), config);
+            enforceHourlyCap(account.user().id(), config);
+        } catch (AbvException e) {
+            otpRequest("resend", false, "rate_limited");
+            throw e;
+        }
 
-        Issued issued = issue(account.user(), ip);
+        Issued issued = issue(account.user(), ip, "resend");
         return new Resent(issued.expiresIn(), issued.resendIn(), issued.emailQueued(),
                 props.echoVerificationCode() ? issued.code() : null);
     }
@@ -131,12 +147,14 @@ public class EmailVerificationService {
         AbvProperties.EmailVerification config = props.emailVerification();
         boolean development = isDevelopmentTool(config);
         if (!development && !MODE_ON.equalsIgnoreCase(config.sendCode())) {
+            otpRequest("manual", false, "disabled");
             throw AbvException.notFound("no such endpoint: /api/v1/auth/send-code");
         }
 
         String email = Emails.normalize(rawEmail);
         UserRepository.Account account = users.accountByEmail(email);
         if (account == null) {
+            otpRequest("manual", false, "not_registered");
             throw new AbvException(AbvException.Code.CONFLICT, "email is not registered",
                     Map.of("field", "email", "reason", "email_not_registered"), null);
         }
@@ -146,15 +164,20 @@ public class EmailVerificationService {
 
         if (development) {
             // Dev-инструмент: письмо уходит сразу, пауза и лимит обходятся.
-            Issued issued = issue(account.user(), ip);
+            Issued issued = issue(account.user(), ip, "manual");
             log.info("manual verification mail requested for user_id={} (dev mode)", account.user().id());
             return new Resent(issued.expiresIn(), Duration.ZERO, issued.emailQueued(),
                     props.echoVerificationCode() ? issued.code() : null);
         }
 
-        enforceCooldown(account.user().id(), config);
-        enforceHourlyCap(account.user().id(), config);
-        Issued issued = issue(account.user(), ip);
+        try {
+            enforceCooldown(account.user().id(), config);
+            enforceHourlyCap(account.user().id(), config);
+        } catch (AbvException e) {
+            otpRequest("manual", false, "rate_limited");
+            throw e;
+        }
+        Issued issued = issue(account.user(), ip, "manual");
         log.info("manual verification mail requested for user_id={}", account.user().id());
         return new Resent(issued.expiresIn(), issued.resendIn(), issued.emailQueued(),
                 props.echoVerificationCode() ? issued.code() : null);
@@ -197,6 +220,18 @@ public class EmailVerificationService {
      * @return подтверждённый пользователь (для выдачи токенов)
      */
     public User verify(String rawEmail, String rawCode) {
+        User verified;
+        try {
+            verified = doVerify(rawEmail, rawCode);
+        } catch (AbvException e) {
+            metrics.otpVerification("email_verify", BusinessMetrics.FAILURE, failureReason(e));
+            throw e;
+        }
+        metrics.otpVerification("email_verify", BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
+        return verified;
+    }
+
+    private User doVerify(String rawEmail, String rawCode) {
         AbvProperties.EmailVerification config = props.emailVerification();
         String email = Emails.normalize(rawEmail);
         String code = EmailCodes.digitsOnly(rawCode);
@@ -244,6 +279,35 @@ public class EmailVerificationService {
 
     private String pepper() {
         return props.jwtSecret();
+    }
+
+    /** Учёт запроса на отправку кода: успех — письмо принято в очередь. */
+    private void otpRequest(String purpose, boolean queued, String failureReason) {
+        metrics.otpRequest(purpose,
+                queued ? BusinessMetrics.SUCCESS : BusinessMetrics.FAILURE,
+                queued ? BusinessMetrics.NO_REASON : failureReason);
+    }
+
+    /**
+     * Причина отказа проверки кода из закрытого набора метрик. Текст исключения
+     * в метку не попадает никогда (docs/METRICS.md).
+     */
+    private static String failureReason(AbvException e) {
+        return switch (e.code()) {
+            case VALIDATION_FAILED -> {
+                Object reason = e.details() == null ? null : e.details().get("reason");
+                if ("expired".equals(reason)) {
+                    yield "expired";
+                }
+                if ("too_many_attempts".equals(reason)) {
+                    yield "too_many_attempts";
+                }
+                yield "invalid_code";
+            }
+            case CONFLICT -> "already_verified";
+            case INVALID_REQUEST -> "invalid_input";
+            default -> "internal_error";
+        };
     }
 
     private static AbvException invalidCode(int attemptsLeft) {

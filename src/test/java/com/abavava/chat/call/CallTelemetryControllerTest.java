@@ -28,7 +28,9 @@ class CallTelemetryControllerTest {
             new TelemetryFixtures.FakeCallRepository().withCall(activeCall());
 
     private CallTelemetryController controller(AbvProperties props) {
-        CallTelemetryService service = new CallTelemetryService(props, repository, mapper, sink);
+        CallTelemetryService service = new CallTelemetryService(props, repository, mapper, sink,
+                new com.abavava.chat.observability.BusinessMetrics(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
         return new CallTelemetryController(service, mapper, props);
     }
 

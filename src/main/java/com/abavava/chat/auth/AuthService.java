@@ -3,6 +3,7 @@ package com.abavava.chat.auth;
 import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.domain.User;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.JwtService;
 import com.abavava.chat.security.Passwords;
 import com.abavava.chat.user.UserRepository;
@@ -42,6 +43,7 @@ public class AuthService {
     private final AbvProperties props;
     private final EmailVerificationService verifications;
     private final PasswordResetService passwordResets;
+    private final BusinessMetrics metrics;
 
     public record SessionMeta(String userAgent, String ip) {
     }
@@ -79,19 +81,30 @@ public class AuthService {
     }
 
     public RegisterPending register(RegisterInput input, SessionMeta meta) {
-        String email = Emails.normalize(input.email());
-        String name = normalizeNickname(input.nickname());
-        //validatePassword(input.password());
-        String hash = Passwords.hash(input.password());
-        User account = users.createAccount(email, name, hash);
-        EmailVerificationService.Issued issued = verifications.issue(account, meta.ip());
-        return new RegisterPending(
-                issued.verificationId(),
-                Emails.mask(email),
-                (int) issued.expiresIn().toSeconds(),
-                (int) issued.resendIn().toSeconds(),
-                issued.emailQueued(),
-                props.echoVerificationCode() ? issued.code() : null);
+        RegisterPending pending;
+        try {
+            String email = Emails.normalize(input.email());
+            String name = normalizeNickname(input.nickname());
+            //validatePassword(input.password());
+            String hash = Passwords.hash(input.password());
+            User account = users.createAccount(email, name, hash);
+            EmailVerificationService.Issued issued = verifications.issue(account, meta.ip());
+            pending = new RegisterPending(
+                    issued.verificationId(),
+                    Emails.mask(email),
+                    (int) issued.expiresIn().toSeconds(),
+                    (int) issued.resendIn().toSeconds(),
+                    issued.emailQueued(),
+                    props.echoVerificationCode() ? issued.code() : null);
+        } catch (AbvException e) {
+            metrics.registration(BusinessMetrics.FAILURE, registrationFailureReason(e));
+            throw e;
+        } catch (RuntimeException e) {
+            metrics.registration(BusinessMetrics.FAILURE, "internal_error");
+            throw e;
+        }
+        metrics.registration(BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
+        return pending;
     }
 
     /** Проверка кода из письма: сразу выдаём пару токенов. */
@@ -125,6 +138,21 @@ public class AuthService {
     }
 
     public AuthResult login(LoginInput input, SessionMeta meta) {
+        AuthResult result;
+        try {
+            result = doLogin(input, meta);
+        } catch (AbvException e) {
+            metrics.login(BusinessMetrics.FAILURE, loginFailureReason(e));
+            throw e;
+        } catch (RuntimeException e) {
+            metrics.login(BusinessMetrics.FAILURE, "internal_error");
+            throw e;
+        }
+        metrics.login(BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
+        return result;
+    }
+
+    private AuthResult doLogin(LoginInput input, SessionMeta meta) {
         String login = normalizeLogin(input.email());
         UserRepository.Account account = users.accountByEmail(login);
         if (account == null) {
@@ -144,6 +172,7 @@ public class AuthService {
 
     public AuthResult refresh(String refreshToken, SessionMeta meta) {
         if (refreshToken == null || refreshToken.isBlank()) {
+            metrics.refresh(BusinessMetrics.FAILURE, "invalid_token");
             throw AbvException.invalidField("refresh_token", "refresh_token is required");
         }
         String oldHash = Passwords.hashToken(refreshToken);
@@ -155,9 +184,24 @@ public class AuthService {
         } catch (RefreshTokenRepository.TokenReuseException reuse) {
             log.warn("refresh token reuse detected: user_id={}", reuse.userId());
             tokens.revokeAllForUser(reuse.userId());
+            metrics.refresh(BusinessMetrics.FAILURE, "token_reuse");
             throw AbvException.unauthorized("session compromised, please sign in again");
+        } catch (AbvException e) {
+            metrics.refresh(BusinessMetrics.FAILURE,
+                    e.code() == AbvException.Code.UNAUTHORIZED ? "invalid_token" : "internal_error");
+            throw e;
+        } catch (RuntimeException e) {
+            metrics.refresh(BusinessMetrics.FAILURE, "internal_error");
+            throw e;
         }
-        User account = users.byId(userId);
+        User account;
+        try {
+            account = users.byId(userId);
+        } catch (RuntimeException e) {
+            metrics.refresh(BusinessMetrics.FAILURE, "unknown_user");
+            throw e;
+        }
+        metrics.refresh(BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
         return result(account, newToken);
     }
 
@@ -190,6 +234,30 @@ public class AuthService {
 
     private static OffsetDateTime expiresAt(Duration ttl) {
         return OffsetDateTime.now(ZoneOffset.UTC).plus(ttl);
+    }
+
+    // ---------------------------------------------- причины отказов для метрик
+
+    /**
+     * Причина отказа регистрации из закрытого набора метрик
+     * (docs/METRICS.md): текст исключения и email в метку не попадают.
+     */
+    private static String registrationFailureReason(AbvException e) {
+        return switch (e.code()) {
+            case CONFLICT -> "email_taken";
+            case VALIDATION_FAILED, INVALID_REQUEST -> "invalid_input";
+            default -> "internal_error";
+        };
+    }
+
+    /** Причина отказа входа из закрытого набора метрик. */
+    private static String loginFailureReason(AbvException e) {
+        return switch (e.code()) {
+            case UNAUTHORIZED -> "invalid_credentials";
+            case FORBIDDEN -> "email_not_verified";
+            case VALIDATION_FAILED, INVALID_REQUEST -> "invalid_input";
+            default -> "internal_error";
+        };
     }
 
     // ----------------------------------------------------------- валидация

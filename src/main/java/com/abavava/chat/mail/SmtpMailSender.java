@@ -1,6 +1,7 @@
 package com.abavava.chat.mail;
 
 import com.abavava.chat.config.AbvProperties;
+import com.abavava.chat.observability.BusinessMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -27,9 +28,11 @@ public class SmtpMailSender implements DisposableBean {
 
     private final AbvProperties.Mail config;
     private final ExecutorService worker;
+    private final BusinessMetrics metrics;
 
-    public SmtpMailSender(AbvProperties props) {
+    public SmtpMailSender(AbvProperties props, BusinessMetrics metrics) {
         this.config = props.mail();
+        this.metrics = metrics;
         this.worker = new ThreadPoolExecutor(
                 1, 1, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(QUEUE_CAPACITY),
@@ -85,8 +88,10 @@ public class SmtpMailSender implements DisposableBean {
                 config.timeout()));
         try {
             transport.deliver(config.from(), to, raw);
+            metrics.mailDelivery(BusinessMetrics.SUCCESS);
             log.info("mail accepted by {}:{} for {}", config.host(), config.port(), MailAddresses.mask(to));
         } catch (Exception e) {
+            metrics.mailDelivery(BusinessMetrics.FAILURE);
             log.error("mail delivery failed ({}:{}): {}", config.host(), config.port(), e.toString());
         }
     }

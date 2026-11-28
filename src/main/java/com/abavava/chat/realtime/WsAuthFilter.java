@@ -4,6 +4,7 @@ import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.contract.UserLookup;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.http.Httpx;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.JwtService;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -32,6 +33,9 @@ import java.util.UUID;
  *
  * <p>Путь /api/v1/ws пропускается {@link com.abavava.chat.http.AccessTokenFilter}'ом
  * как публичный: авторизацию рукопожатия целиком выполняет этот фильтр.
+ *
+ * <p>Отказы считаются в {@code ababawa_security_access_denied_total}
+ * (channel=websocket) без IP, токена и userId в метках.
  */
 public class WsAuthFilter implements Filter {
 
@@ -39,12 +43,15 @@ public class WsAuthFilter implements Filter {
     private final UserLookup users;
     private final AbvProperties props;
     private final ObjectMapper mapper;
+    private final BusinessMetrics metrics;
 
-    public WsAuthFilter(JwtService jwtService, UserLookup users, AbvProperties props, ObjectMapper mapper) {
+    public WsAuthFilter(JwtService jwtService, UserLookup users, AbvProperties props,
+                        ObjectMapper mapper, BusinessMetrics metrics) {
         this.jwtService = jwtService;
         this.users = users;
         this.props = props;
         this.mapper = mapper;
+        this.metrics = metrics;
     }
 
     @Override
@@ -61,6 +68,7 @@ public class WsAuthFilter implements Filter {
         // 1) Токен: заголовок Authorization либо query-параметр (браузерный WS).
         String token = Httpx.tokenFromRequest(req);
         if (token == null) {
+            metrics.accessDenied("websocket", "missing_token");
             Httpx.writeError(res, AbvException.unauthorized("token is required"), mapper);
             return;
         }
@@ -70,6 +78,7 @@ public class WsAuthFilter implements Filter {
         try {
             userId = jwtService.verifyAccessToken(token);
         } catch (AbvException e) {
+            metrics.accessDenied("websocket", "invalid_token");
             Httpx.writeError(res, e, mapper);
             return;
         }
@@ -79,6 +88,7 @@ public class WsAuthFilter implements Filter {
         try {
             users.byId(userId);
         } catch (RuntimeException e) {
+            metrics.accessDenied("websocket", "user_not_found");
             Httpx.writeError(res, AbvException.unauthorized("user not found"), mapper);
             return;
         }
@@ -88,6 +98,7 @@ public class WsAuthFilter implements Filter {
         String origin = req.getHeader("Origin");
         if (origin != null && !origin.isBlank()
                 && !Httpx.originAllowed(origin, req.getHeader("Host"), props.allowedOriginList())) {
+            metrics.accessDenied("websocket", "origin_denied");
             Httpx.writeError(res, AbvException.forbidden("origin is not allowed"), mapper);
             return;
         }

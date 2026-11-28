@@ -3,6 +3,7 @@ package com.abavava.chat.call;
 import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.domain.Call;
+import com.abavava.chat.observability.BusinessMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -111,6 +112,7 @@ public class CallTelemetryService {
     private final CallRepository calls;
     private final ObjectMapper mapper;
     private final TelemetrySink sink;
+    private final BusinessMetrics metrics;
 
     /** LRU по eventId: защита от дублей при retry, ограниченная по памяти. */
     private final Map<String, Boolean> seenEventIds = new LinkedHashMap<>(1_024, 0.75f, true);
@@ -118,11 +120,13 @@ public class CallTelemetryService {
     public CallTelemetryService(AbvProperties properties,
                                 CallRepository calls,
                                 ObjectMapper mapper,
-                                TelemetrySink sink) {
+                                TelemetrySink sink,
+                                BusinessMetrics metrics) {
         this.properties = properties;
         this.calls = calls;
         this.mapper = mapper;
         this.sink = sink;
+        this.metrics = metrics;
     }
 
     /** Итог приёма batch'а: сколько записано, отброшено и признано дублями. */
@@ -149,8 +153,10 @@ public class CallTelemetryService {
             try {
                 Map<String, Object> event = normalizeEvent(userId, raw, requestId, callsById);
                 String eventId = String.valueOf(event.get("eventId"));
+                String eventName = String.valueOf(event.get("event"));
                 if (isDuplicate(eventId)) {
                     duplicates += 1;
+                    metrics.telemetryEvent(eventName, "duplicate");
                     continue;
                 }
                 String line = mapper.writeValueAsString(event);
@@ -160,14 +166,18 @@ public class CallTelemetryService {
                 sink.write(line);
                 markSeen(eventId);
                 accepted += 1;
+                metrics.telemetryEvent(eventName, "accepted");
+                countMediaConnected(event, eventName);
             } catch (InvalidEvent e) {
                 dropped += 1;
                 lastReason = e.reason();
+                metrics.telemetryEvent(rawEventName(raw), "dropped");
                 log.debug("call telemetry event dropped: reason={} event={}",
                         e.reason(), raw == null ? null : raw.get("event"));
             } catch (RuntimeException e) {
                 dropped += 1;
                 lastReason = "internal_error";
+                metrics.telemetryEvent(rawEventName(raw), "dropped");
                 log.debug("call telemetry event failed: {}", e.toString());
             }
         }
@@ -183,6 +193,30 @@ public class CallTelemetryService {
     /* ------------------------------------------------------------------ */
     /* Валидация и обогащение                                              */
     /* ------------------------------------------------------------------ */
+
+    /** Имя события из «сырого» элемента batch'а (может быть мусором). */
+    private static String rawEventName(Map<String, Object> raw) {
+        Object value = raw == null ? null : raw.get("event");
+        return value instanceof String text ? text : null;
+    }
+
+    /**
+     * Признак установленного медиасоединения: клиент сообщил о переходе
+     * RTCPeerConnection в {@code connected}. Сервер это подтвердить не может
+     * (медиа идёт мимо), поэтому метрика клиентская и считается по переходам
+     * состояния, а не по звонкам: после ICE restart их бывает несколько.
+     */
+    private void countMediaConnected(Map<String, Object> event, String eventName) {
+        if (!"ice_state_changed".equals(eventName)) {
+            return;
+        }
+        Object details = event.get("details");
+        if (!(details instanceof Map<?, ?> map) || !"connected".equals(map.get("connection_state"))) {
+            return;
+        }
+        Object role = event.get("peerRole");
+        metrics.callMediaConnected(role instanceof String text ? text : null);
+    }
 
     private Map<String, Object> normalizeEvent(UUID userId,
                                                Map<String, Object> raw,

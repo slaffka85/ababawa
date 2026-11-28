@@ -3,6 +3,7 @@ package com.abavava.chat.realtime;
 import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.contract.UserLookup;
 import com.abavava.chat.http.Httpx;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.JwtService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,9 +89,10 @@ public class RealtimeConfig implements WebSocketConfigurer {
     public FilterRegistrationBean<WsAuthFilter> wsAuthFilter(JwtService jwtService,
                                                             UserLookup users,
                                                             AbvProperties props,
-                                                            ObjectMapper mapper) {
+                                                            ObjectMapper mapper,
+                                                            BusinessMetrics metrics) {
         FilterRegistrationBean<WsAuthFilter> bean =
-                new FilterRegistrationBean<>(new WsAuthFilter(jwtService, users, props, mapper));
+                new FilterRegistrationBean<>(new WsAuthFilter(jwtService, users, props, mapper, metrics));
         bean.addUrlPatterns(WS_PATH);
         bean.setOrder(WS_AUTH_FILTER_ORDER);
         return bean;

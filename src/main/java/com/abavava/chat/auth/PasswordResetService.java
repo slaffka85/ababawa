@@ -4,6 +4,7 @@ import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
 import com.abavava.chat.domain.User;
 import com.abavava.chat.mail.VerificationMailer;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.security.EmailCodes;
 import com.abavava.chat.security.Passwords;
 import com.abavava.chat.user.UserRepository;
@@ -46,9 +47,14 @@ public class PasswordResetService {
     private final RefreshTokenRepository tokens;
     private final VerificationMailer mailer;
     private final AbvProperties props;
+    private final BusinessMetrics metrics;
 
-    /** Ответ на запрос кода: нейтральный, без признаков существования адреса. */
-    public record Requested(String email, Duration expiresIn, Duration resendIn, String devCode) {
+    /**
+     * Ответ на запрос кода: нейтральный, без признаков существования адреса.
+     * {@code emailQueued} — письмо принято в очередь (для метрик отправки).
+     */
+    public record Requested(String email, Duration expiresIn, Duration resendIn,
+                            boolean emailQueued, String devCode) {
     }
 
     public Requested request(String rawEmail, String ip) {
@@ -57,12 +63,18 @@ public class PasswordResetService {
         UserRepository.Account account = users.accountByEmail(email);
         if (account == null) {
             log.info("password reset requested for unknown address {}", Emails.mask(email));
-            return new Requested(Emails.mask(email), config.codeTtl(), config.resendCooldown(), null);
+            otpRequest(false, "unknown_email");
+            return new Requested(Emails.mask(email), config.codeTtl(), config.resendCooldown(), false, null);
         }
 
         UUID userId = account.user().id();
-        enforceCooldown(userId, config);
-        enforceHourlyCap(userId, config);
+        try {
+            enforceCooldown(userId, config);
+            enforceHourlyCap(userId, config);
+        } catch (AbvException e) {
+            otpRequest(false, "rate_limited");
+            throw e;
+        }
 
         Instant now = Instant.now();
         // Действующим остаётся только свежий код.
@@ -73,6 +85,7 @@ public class PasswordResetService {
         codes.purgeExpiredBefore(now.minus(config.codeTtl()));
 
         boolean queued = mailer.sendPasswordReset(account.user().nickname(), email, code);
+        otpRequest(queued, BusinessMetrics.NO_REASON);
         if (props.echoVerificationCode()) {
             log.warn("development mode: password reset code {} for {} (not logged in production)",
                     code, Emails.mask(email));
@@ -83,12 +96,24 @@ public class PasswordResetService {
             log.warn("password reset mail was not queued for user_id={} (abv.mail.enabled=false or queue is full)",
                     userId);
         }
-        return new Requested(Emails.mask(email), config.codeTtl(), config.resendCooldown(),
+        return new Requested(Emails.mask(email), config.codeTtl(), config.resendCooldown(), queued,
                 props.echoVerificationCode() ? code : null);
     }
 
     /** Проверяет код и меняет пароль; старые сессии отзываются. */
     public User reset(String rawEmail, String rawCode, String rawPassword) {
+        User updated;
+        try {
+            updated = doReset(rawEmail, rawCode, rawPassword);
+        } catch (AbvException e) {
+            metrics.otpVerification("password_reset", BusinessMetrics.FAILURE, failureReason(e));
+            throw e;
+        }
+        metrics.otpVerification("password_reset", BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
+        return updated;
+    }
+
+    private User doReset(String rawEmail, String rawCode, String rawPassword) {
         AbvProperties.EmailVerification config = props.emailVerification();
         AuthService.validatePassword(rawPassword);
 
@@ -157,6 +182,32 @@ public class PasswordResetService {
 
     private String pepper() {
         return props.jwtSecret();
+    }
+
+    /** Учёт запроса кода для сброса пароля (purpose=password_reset). */
+    private void otpRequest(boolean queued, String failureReason) {
+        metrics.otpRequest("password_reset",
+                queued ? BusinessMetrics.SUCCESS : BusinessMetrics.FAILURE,
+                queued ? BusinessMetrics.NO_REASON : failureReason);
+    }
+
+    /** Причина отказа проверки кода из закрытого набора метрик. */
+    private static String failureReason(AbvException e) {
+        return switch (e.code()) {
+            case VALIDATION_FAILED -> {
+                Object reason = e.details() == null ? null : e.details().get("reason");
+                if ("expired".equals(reason)) {
+                    yield "expired";
+                }
+                if ("too_many_attempts".equals(reason)) {
+                    yield "too_many_attempts";
+                }
+                yield "invalid_code";
+            }
+            case CONFLICT -> "already_verified";
+            case INVALID_REQUEST -> "invalid_input";
+            default -> "internal_error";
+        };
     }
 
     private static AbvException invalidCode(int attemptsLeft) {

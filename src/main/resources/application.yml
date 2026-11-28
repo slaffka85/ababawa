@@ -90,6 +90,9 @@ management:
       # Цена — несколько дополнительных рядов _bucket{le} на каждый uri.
       percentiles-histogram:
         http.server.requests: true
+        # Бизнес-таймер длительности звонка (ababawa.calls.duration): без
+        # гистограммы histogram_quantile() по нему не считается.
+        ababawa.calls.duration: true
   prometheus:
     metrics:
       export:
@@ -118,6 +121,19 @@ abv:
 
   # CORS и проверка Origin для WebSocket-рукопожатия.
   allowed-origins: "http://localhost:5173,http://127.0.0.1:5173"
+
+  # Доверенные reverse proxy (IP и CIDR через запятую): только их заголовкам
+  # X-Forwarded-For / X-Real-IP / Forwarded верит ClientIpResolver, и только от
+  # них берётся адрес клиента в цепочке. Прямое соединение не от прокси даёт
+  # RemoteAddr: подставить IP заголовком нельзя.
+  #
+  # Значение по умолчанию рассчитано на штатную схему: host-Nginx (127.0.0.1)
+  # проксирует в контейнер api, опубликованный на loopback, поэтому соединение
+  # приходит из bridge-сети Docker (172.16.0.0/12) или с loopback. Если API
+  # доступен кому-то ещё, сузьте список до адреса прокси:
+  #   ABV_TRUSTED_PROXIES=172.18.0.1/32
+  # Пустое значение — не доверять никому (все forwarded-заголовки игнорируются).
+  trusted-proxies: "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
   log-level: info
   # Применять SQL-миграции при старте.

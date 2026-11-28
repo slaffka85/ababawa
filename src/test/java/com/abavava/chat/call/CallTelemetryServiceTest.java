@@ -2,6 +2,8 @@ package com.abavava.chat.call;
 
 import com.abavava.chat.config.AbvProperties;
 import com.abavava.chat.domain.AbvException;
+import com.abavava.chat.observability.BusinessMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -30,11 +32,57 @@ class CallTelemetryServiceTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final TelemetryFixtures.RecordingSink sink = new TelemetryFixtures.RecordingSink();
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final TelemetryFixtures.FakeCallRepository repository =
             new TelemetryFixtures.FakeCallRepository().withCall(activeCall());
 
     private CallTelemetryService service(AbvProperties props) {
-        return new CallTelemetryService(props, repository, mapper, sink);
+        return new CallTelemetryService(props, repository, mapper, sink, new BusinessMetrics(registry));
+    }
+
+    @Test
+    void countsAcceptedDuplicateAndDroppedTelemetryEvents() throws Exception {
+        CallTelemetryService service = service(loadProps());
+        Map<String, Object> connected = baseEvent("ice_state_changed");
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("connection_state", "connected");
+        details.put("ice_connection_state", "connected");
+        connected.put("details", details);
+        Map<String, Object> duplicate = baseEvent("ice_state_changed");
+        duplicate.put("eventId", connected.get("eventId"));
+        duplicate.put("details", details);
+        Map<String, Object> broken = baseEvent("call_started");
+        broken.put("schemaVersion", 2);
+
+        CallTelemetryService.IngestResult result =
+                service.ingest(CALLEE_ID, List.of(connected, duplicate, broken), "req-1");
+
+        assertThat(result.accepted()).isEqualTo(1);
+        assertThat(result.duplicates()).isEqualTo(1);
+        assertThat(result.dropped()).isEqualTo(1);
+        assertThat(counter("ababawa.call_telemetry.events",
+                "event", "ice_state_changed", "result", "accepted")).isEqualTo(1.0);
+        assertThat(counter("ababawa.call_telemetry.events",
+                "event", "ice_state_changed", "result", "duplicate")).isEqualTo(1.0);
+        assertThat(counter("ababawa.call_telemetry.events",
+                "event", "call_started", "result", "dropped")).isEqualTo(1.0);
+        // Медиасоединение подтверждено клиентом (роль считает сервер).
+        assertThat(counter("ababawa.calls.media_connected", "role", "callee")).isEqualTo(1.0);
+    }
+
+    @Test
+    void mapsEventNamesOutsideTheSchemaToOtherLabel() throws Exception {
+        CallTelemetryService service = service(loadProps());
+
+        service.ingest(CALLEE_ID, List.of(baseEvent("definitely_not_an_event")), "req-1");
+
+        assertThat(counter("ababawa.call_telemetry.events",
+                "event", "other", "result", "dropped")).isEqualTo(1.0);
+    }
+
+    private double counter(String name, String... tags) {
+        var counter = registry.find(name).tags(tags).counter();
+        return counter == null ? 0.0 : counter.count();
     }
 
     private Map<String, Object> onlyLine() {
@@ -232,7 +280,7 @@ class CallTelemetryServiceTest {
         TelemetryFixtures.FakeCallRepository failing = new TelemetryFixtures.FakeCallRepository()
                 .failingWith(new IllegalStateException("db is down"));
         CallTelemetryService service = new CallTelemetryService(
-                loadProps(), failing, mapper, sink);
+                loadProps(), failing, mapper, sink, new BusinessMetrics(registry));
 
         CallTelemetryService.IngestResult result =
                 service.ingest(CALLEE_ID, List.of(baseEvent("stats_sample")), "req-1");

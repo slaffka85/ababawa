@@ -12,6 +12,7 @@ import com.abavava.chat.domain.CallKind;
 import com.abavava.chat.domain.CallStatus;
 import com.abavava.chat.domain.Events;
 import com.abavava.chat.domain.User;
+import com.abavava.chat.observability.BusinessMetrics;
 import com.abavava.chat.push.FcmPushSender;
 import com.abavava.chat.push.PushDeviceRepository;
 import org.slf4j.Logger;
@@ -65,6 +66,7 @@ public class CallService implements CallCommands {
     private final ObjectProvider<Broadcaster> broadcasterProvider;
     private final PushDeviceRepository pushDevices;
     private final FcmPushSender pushSender;
+    private final BusinessMetrics metrics;
     /** Таймаут дозвона (abv.call-ring-timeout). */
     private final Duration ringTimeout;
 
@@ -79,13 +81,15 @@ public class CallService implements CallCommands {
                        ObjectProvider<Broadcaster> broadcasterProvider,
                        PushDeviceRepository pushDevices,
                        FcmPushSender pushSender,
-                       AbvProperties properties) {
+                       AbvProperties properties,
+                       BusinessMetrics metrics) {
         this.repo = repo;
         this.users = users;
         this.chat = chat;
         this.broadcasterProvider = broadcasterProvider;
         this.pushDevices = pushDevices;
         this.pushSender = pushSender;
+        this.metrics = metrics;
         // Валидность (положительный Duration) проверяется в AbvProperties.validate().
         this.ringTimeout = properties.callRingTimeout();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(task -> {
@@ -102,11 +106,23 @@ public class CallService implements CallCommands {
      * Если вызываемый не в сети, звонок сразу фиксируется как missed.
      */
     public Call start(UUID actor, StartInput in) {
-        CallKind kind = validateStartInput(actor, in);
-        CallParticipants participants = loadParticipants(actor, in.calleeId());
-        ensureAvailable(actor, in.calleeId());
-        UUID conversationId = resolveConversationId(actor, in.calleeId(), in.conversationId());
-        Call created = createCall(actor, in.calleeId(), conversationId, kind);
+        CallParticipants participants;
+        Call created;
+        try {
+            CallKind kind = validateStartInput(actor, in);
+            participants = loadParticipants(actor, in.calleeId());
+            ensureAvailable(actor, in.calleeId());
+            UUID conversationId = resolveConversationId(actor, in.calleeId(), in.conversationId());
+            created = createCall(actor, in.calleeId(), conversationId, kind);
+            metrics.callCreated(created.kind().json());
+        } catch (AbvException e) {
+            metrics.callStart(BusinessMetrics.FAILURE, startFailureReason(e));
+            throw e;
+        } catch (RuntimeException e) {
+            metrics.callStart(BusinessMetrics.FAILURE, "internal_error");
+            throw e;
+        }
+        metrics.callStart(BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
         return notifyCallStarted(created, actor, participants);
     }
 
@@ -191,6 +207,7 @@ public class CallService implements CallCommands {
         Call missed = repo.transition(new CallRepository.TransitionInput(
                 created.id(), CallStatus.RINGING, CallStatus.MISSED, null, REASON_TIMEOUT));
         repo.logEvent(created.id(), null, "missed", Map.of("reason", "callee offline"));
+        metrics.callEnded(missed.status().json());
         sendCallEvent(Events.CALL_UPDATED, missed, List.of(callerId));
         return missed;
     }
@@ -219,6 +236,7 @@ public class CallService implements CallCommands {
                 callId, CallStatus.RINGING, CallStatus.ACCEPTED, actor, null));
         cancelRingTimer(callId);
         repo.logEvent(callId, actor, "accepted", null);
+        metrics.callAccepted(updated.kind().json());
         sendCallEvent(Events.CALL_UPDATED, updated, participants(updated));
         return updated;
     }
@@ -235,6 +253,7 @@ public class CallService implements CallCommands {
                 defaultReason(reason, REASON_REJECTED)));
         cancelRingTimer(callId);
         repo.logEvent(callId, actor, "rejected", null);
+        metrics.callEnded(updated.status().json());
         sendCallEvent(Events.CALL_UPDATED, updated, participants(updated));
         return updated;
     }
@@ -265,6 +284,10 @@ public class CallService implements CallCommands {
                 callId, from, target, actor, defaultReason(reason, REASON_HANGUP)));
         cancelRingTimer(callId);
         repo.logEvent(callId, actor, "ended", Map.of("status", target.json()));
+        metrics.callEnded(updated.status().json());
+        if (updated.status() == CallStatus.ENDED) {
+            metrics.callDuration(updated.kind().json(), updated.durationSeconds());
+        }
         sendCallEvent(Events.CALL_UPDATED, updated, participants(updated));
         return updated;
     }
@@ -277,32 +300,64 @@ public class CallService implements CallCommands {
      */
     @Override
     public void signal(UUID actor, UUID callId, Map<String, Object> payload) {
-        if (payload == null || payload.isEmpty()) {
-            throw AbvException.invalidField("payload", "payload is required");
+        String event = signalingEvent(payload);
+        try {
+            if (payload == null || payload.isEmpty()) {
+                countSignalingFailure(event, "invalid_payload");
+                throw AbvException.invalidField("payload", "payload is required");
+            }
+            Object rawType = payload.get("type");
+            String type = rawType instanceof String s ? s : "";
+            if (!"offer".equals(type) && !"answer".equals(type) && !"candidate".equals(type)) {
+                countSignalingFailure(event, "invalid_payload");
+                throw AbvException.invalidField("payload.type",
+                        "payload.type must be \"offer\", \"answer\" or \"candidate\"");
+            }
+
+            Call current = repo.byId(callId);
+            if (!current.involved(actor)) {
+                countSignalingFailure(event, "not_participant");
+                throw AbvException.forbidden("you are not a participant of this call");
+            }
+            if (current.status().terminal()) {
+                countSignalingFailure(event, "call_finished");
+                throw AbvException.conflict("call is already %s", current.status().json());
+            }
+
+            UUID peer = current.party(actor);
+            Broadcaster broadcaster = broadcaster();
+            if (!broadcaster.isOnline(peer)) {
+                log.warn("signal for offline peer dropped: call_id={} peer_id={}", callId, peer);
+                countSignalingFailure(event, "peer_offline");
+                throw AbvException.conflict("the other participant is offline");
+            }
+            broadcaster.sendToUsers(List.of(peer),
+                    Events.newEvent(Events.CALL_SIGNAL, new Events.SignalPayload(callId, actor, payload)));
+            metrics.callSignaling(event, BusinessMetrics.SUCCESS, BusinessMetrics.NO_REASON);
+        } catch (AbvException e) {
+            // Причина уже посчитана в точке отказа; здесь только проброс.
+            if (e.code() == AbvException.Code.NOT_FOUND) {
+                countSignalingFailure(event, "not_found");
+            }
+            throw e;
+        } catch (RuntimeException e) {
+            countSignalingFailure(event, "internal_error");
+            throw e;
         }
-        Object rawType = payload.get("type");
+    }
+
+    private void countSignalingFailure(String event, String reason) {
+        metrics.callSignaling(event, BusinessMetrics.FAILURE, reason);
+    }
+
+    /** Тип кадра сигналинга для метрики: offer/answer/candidate, иначе unknown. */
+    private static String signalingEvent(Map<String, Object> payload) {
+        Object rawType = payload == null ? null : payload.get("type");
         String type = rawType instanceof String s ? s : "";
-        if (!"offer".equals(type) && !"answer".equals(type) && !"candidate".equals(type)) {
-            throw AbvException.invalidField("payload.type",
-                    "payload.type must be \"offer\", \"answer\" or \"candidate\"");
-        }
-
-        Call current = repo.byId(callId);
-        if (!current.involved(actor)) {
-            throw AbvException.forbidden("you are not a participant of this call");
-        }
-        if (current.status().terminal()) {
-            throw AbvException.conflict("call is already %s", current.status().json());
-        }
-
-        UUID peer = current.party(actor);
-        Broadcaster broadcaster = broadcaster();
-        if (!broadcaster.isOnline(peer)) {
-            log.warn("signal for offline peer dropped: call_id={} peer_id={}", callId, peer);
-            throw AbvException.conflict("the other participant is offline");
-        }
-        broadcaster.sendToUsers(List.of(peer),
-                Events.newEvent(Events.CALL_SIGNAL, new Events.SignalPayload(callId, actor, payload)));
+        return switch (type) {
+            case "offer", "answer", "candidate" -> type;
+            default -> "unknown";
+        };
     }
 
     // --------------------------------------------------- чтение состояния
@@ -407,6 +462,7 @@ public class CallService implements CallCommands {
             Call updated = repo.transition(new CallRepository.TransitionInput(
                     callId, CallStatus.RINGING, CallStatus.MISSED, null, REASON_TIMEOUT));
             repo.logEvent(callId, null, "missed", Map.of("reason", "timeout"));
+            metrics.callEnded(updated.status().json());
             sendCallEvent(Events.CALL_UPDATED, updated, participants(updated));
         } catch (AbvException e) {
             if (e.code() == AbvException.Code.CONFLICT) {
@@ -474,5 +530,21 @@ public class CallService implements CallCommands {
         }
         String trimmed = reason.strip();
         return trimmed.isEmpty() ? fallback : trimmed;
+    }
+
+    /**
+     * Причина отказа создания звонка из закрытого набора метрик
+     * (docs/METRICS.md). «Нельзя звонить самому себе» — отдельное значение
+     * {@code self_call}, остальные невалидные входы — {@code invalid_input}.
+     */
+    private static String startFailureReason(AbvException e) {
+        return switch (e.code()) {
+            case INVALID_REQUEST -> "cannot call yourself".equals(e.getMessage())
+                    ? "self_call" : "invalid_input";
+            case VALIDATION_FAILED -> "invalid_input";
+            case NOT_FOUND -> "callee_not_found";
+            case CONFLICT -> "busy";
+            default -> "internal_error";
+        };
     }
 }
