@@ -111,9 +111,18 @@ public class MailTemplates {
     private static String load(String path) {
         try {
             ClassPathResource resource = new ClassPathResource(path);
-            return resource.getContentAsString(StandardCharsets.UTF_8);
+            return normalizeNewlines(resource.getContentAsString(StandardCharsets.UTF_8));
         } catch (IOException e) {
             throw new UncheckedIOException("cannot load mail template " + path, e);
         }
+    }
+
+    /**
+     * В репозитории шаблоны лежат с LF, но Windows-checkout (core.autocrlf=true)
+     * отдаёт CRLF. Письмо должно быть одинаковым на любой ОС, поэтому переводы
+     * строк канонизируем к LF — на этом контракте построены тесты и парсеры.
+     */
+    private static String normalizeNewlines(String content) {
+        return content.replace("\r\n", "\n").replace('\r', '\n');
     }
 }

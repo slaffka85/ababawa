@@ -79,6 +79,19 @@ class MailTemplatesTest {
         assertThat(mail.html()).contains("Hey, there,");
     }
 
+    @Test
+    void rendersSameTextOnWindowsAndUnixCheckouts() {
+        // Windows-checkout с core.autocrlf=true отдаёт шаблоны с CRLF. Письмо
+        // всё равно должно быть байт-в-байт одинаковым: LF, без «\r».
+        MailTemplates.RenderedMail verification = verification("Аня", "483920", "user@example.com");
+        MailTemplates.RenderedMail reset = passwordReset("Аня", "654321", "user@example.com");
+
+        for (MailTemplates.RenderedMail mail : new MailTemplates.RenderedMail[]{verification, reset}) {
+            assertThat(mail.text()).doesNotContain("\r");
+            assertThat(mail.html()).doesNotContain("\r");
+        }
+    }
+
     private MailTemplates.RenderedMail verification(String nickname, String code, String recipient) {
         return templates.verificationCode(nickname, code, 15, "support@ababawa.tssv85.com", recipient);
     }
