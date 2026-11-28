@@ -11,6 +11,7 @@
     "build:only": "vite build",
     "build:sandbox": "node tools/sandbox-build/run-build.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "node --test --test-isolation=none \"test/*.test.ts\"",
     "preview": "vite preview",
     "media:check": "node tools/media-check.mjs",
     "vad:check": "node tools/vad-check.mjs",

@@ -47,6 +47,33 @@ jar ещё не собран — стартует с classpath из локаль
 Docker Compose для VPS, GitHub Actions и пошаговая настройка описаны в
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
+### Централизованные логи
+
+Все контейнеры пишут в stdout/stderr: обычные логи API (Spring, миграции, ошибки
+SMTP) и структурированную телеметрию звонков — одна NDJSON-строка на событие.
+Драйвер `json-file` с ротацией задан в `compose.prod.yaml` (`x-logging`), а
+собирает логи отдельный стек **monitoring** (соседний репозиторий/каталог):
+**Alloy** читает Docker-логи через API демона и отправляет их в **Loki**, панели —
+в Grafana.
+
+```powershell
+# Grafana (метрики + логи), только через SSH-туннель
+ssh -N -L 3001:127.0.0.1:3001 deploy@<VPS_HOST>
+# затем http://127.0.0.1:3001 → дашборд «ababawa / Calls & Telemetry»
+```
+
+Полезные запросы в Grafana Explore (источник Loki):
+
+```logql
+{project="abavava", service="api"} | json | event != ""      # события звонков
+{project="abavava", service="api"} |= "<callId>"             # один звонок
+{project="abavava"} |= "ERROR"                               # ошибки всех контейнеров
+```
+
+События и их поля описаны в `docs/API.md` (раздел «Звонки»), сбор логов и
+ретеншен — в README стека monitoring. Приложение не знает про Loki: чтобы сменить
+хранилище логов, достаточно переконфигурировать Alloy.
+
 ### Web
 
 ```powershell
@@ -56,6 +83,19 @@ npm run dev
 ```
 
 Vite проксирует `/api` и WebSocket на Java API `localhost:8082`. Для подключения телефона в одной сети используйте режим `npm run local` и адрес компьютера, указанный в клиенте.
+
+Проверки web-клиента (без сети и без браузера):
+
+```powershell
+cd web
+npm run typecheck   # tsc --noEmit
+npm test            # node:test: ICE restart, perfect negotiation, stats, телеметрия
+```
+
+Телеметрия звонка (`POST /api/v1/calls/telemetry`) пишется backend'ом в stdout в
+формате NDJSON — см. `docs/API.md`, раздел «Звонки». Настройки частоты сбора
+статистики, ICE restart и телеметрии — переменные `VITE_CALL_*` в
+`web/.env.example`.
 
 ### Android
 

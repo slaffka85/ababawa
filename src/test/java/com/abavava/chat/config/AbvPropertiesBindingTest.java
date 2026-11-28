@@ -60,6 +60,10 @@ class AbvPropertiesBindingTest {
         assertThat(props.chat().maxGroupMembers()).isEqualTo(64);
         assertThat(props.chat().maxTitleLength()).isEqualTo(128);
 
+        assertThat(props.telemetry().enabled()).isTrue();
+        assertThat(props.telemetry().maxBatchEvents()).isEqualTo(64);
+        assertThat(props.telemetry().maxEventBytes()).isEqualTo(8192);
+
         assertThat(props.mail().enabled()).isTrue();
         assertThat(props.mail().host()).isEqualTo("127.0.0.1");
         assertThat(props.mail().port()).isEqualTo(25);

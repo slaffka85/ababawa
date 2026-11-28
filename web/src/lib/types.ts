@@ -185,6 +185,15 @@ export interface IceConfigResponse {
   ice_servers: IceServer[];
 }
 
+/** Ответ POST /calls/telemetry: сколько событий принято/отброшено сервером. */
+export interface TelemetryAcceptedResponse {
+  accepted: number;
+  dropped: number;
+  duplicates: number;
+  /** true — приём телеметрии выключен конфигурацией backend. */
+  disabled: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   db?: string;
@@ -227,15 +236,22 @@ export interface OutCallEnd {
   reason?: string;
 }
 
-/** SDP/ICE, который backend транзитом передаёт второму участнику. */
+/**
+ * SDP/ICE, который backend транзитом передаёт второму участнику.
+ *
+ * `username_fragment` — необязательное расширение v1 (backend payload не
+ * интерпретирует): по нему сторона отбрасывает кандидатов от откатанного или
+ * проигнорированного offer'а при offer collision / ICE restart.
+ */
 export type SignalPayload =
-  | { type: 'offer'; sdp: string }
-  | { type: 'answer'; sdp: string }
+  | { type: 'offer'; sdp: string; username_fragment?: string | null }
+  | { type: 'answer'; sdp: string; username_fragment?: string | null }
   | {
       type: 'candidate';
       candidate: string;
       sdp_mid: string | null;
       sdp_mline_index: number | null;
+      username_fragment?: string | null;
     };
 
 export interface OutCallSignal {

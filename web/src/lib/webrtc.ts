@@ -11,10 +11,31 @@
  *    addTrack (переиспользует transceiver'ы из offer'а) → answer.
  *    Треки добавляются строго после setRemoteDescription, иначе addTrack породил бы
  *    собственный offer и встречный offer-коллизию на ровном месте.
+ *
+ * Восстановление ICE, статистика и телеметрия вынесены в отдельные модули
+ * (ice-recovery.ts, call-stats.ts, telemetry.ts): CallSession остаётся
+ * единственной точкой жизненного цикла RTCPeerConnection.
  */
 import { configApi } from './api';
 import { audioTrackConstraints, rememberedMicId, rememberMicId, shouldFallbackToDefaultMic } from './media-devices';
+import { loadCallConfig, normalizeCallConfig } from './call-config';
+import type { CallRuntimeConfig } from './call-config';
+import { StatsAggregator, emptyStatsSummary, isDegraded } from './call-stats';
+import type { CallStatsSummary } from './call-stats';
+import { IceRecoveryController } from './ice-recovery';
+import type {
+  IceAttemptFailedInfo,
+  IceAttemptInfo,
+  IceExhaustedInfo,
+  IceRecoveredInfo,
+  IceRecoveryTimers,
+} from './ice-recovery';
+import { SessionNegotiator } from './negotiation';
+import type { NegotiationSignal } from './negotiation';
+import type { CallTelemetry, PeerRole } from './telemetry';
 import type { CallKind, IceServer, SignalPayload } from './types';
+
+export type { CallQuality, CallStatsSummary } from './call-stats';
 
 export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 
@@ -44,66 +65,40 @@ export async function loadIceServers(): Promise<RTCIceServer[]> {
   return cachedIceServers;
 }
 
-export type CallQuality = 'good' | 'fair' | 'poor' | 'unknown';
-
-export interface CallStatsSummary {
-  rttMs: number | null;
-  packetsLost: number;
-  packetsReceived: number;
-  lossPercent: number;
-  quality: CallQuality;
-  /**
-   * Диагностика звука. Нужна, чтобы различить две неисправности, которые
-   * выглядят одинаково («не слышно собеседника»):
-   *  - audioInBytes === 0 — звук от собеседника вообще не приходит (проблема
-   *    у него: микрофон выключен, устройство занято, трек не отправляется);
-   *  - audioInBytes растёт, но звука нет — звук приходит, но не воспроизводится
-   *    (политика автоплея, беззвучный режим, громкость медиа на устройстве).
-   */
-  audioInBytes: number;
-  audioOutBytes: number;
-  audioInLevel: number | null;
-}
-
 export interface CallSessionOptions {
   callId: string;
   kind: CallKind;
   myUserId: string;
   peerUserId: string;
+  /** Идентификатор WebRTC-сессии; новый RTCPeerConnection — новый sessionId. */
+  sessionId?: string;
+  /** Роль в звонке для телеметрии: caller/callee. */
+  peerRole?: PeerRole;
+  /** Переопределения таймаутов/частот (в тестах и для нестандартных сетей). */
+  config?: Partial<CallRuntimeConfig>;
+  /** Клиентская телеметрия; null — не отправлять. */
+  telemetry?: CallTelemetry | null;
   /** Отправка call.signal с payload. */
   sendSignal: (payload: SignalPayload) => void;
   onRemoteStream: (stream: MediaStream) => void;
   onLocalStream: (stream: MediaStream) => void;
   onConnectionState: (state: RTCPeerConnectionState) => void;
   onError: (message: string) => void;
+  /** Восстановление ICE исчерпало попытки: понятная причина для UI. */
+  onConnectionRecoveryFailed?: (reason: string) => void;
   /** Камера физически включена/выключена (для индикатора и кнопки). */
   onCameraEnabledChange?: (enabled: boolean) => void;
+  /** Диагностический callback: новая сводка статистики. */
+  onStats?: (stats: CallStatsSummary) => void;
 }
 
-const STATS_POLL_MS = 2_000;
-/** Сколько ждём восстановления ICE при 'disconnected', прежде чем сделать ICE restart. */
-const DISCONNECTED_GRACE_MS = 5_000;
+const STATS_MAX_BACKOFF_MS = 30_000;
 
-interface CandidatePairStat {
-  type: string;
-  state?: string;
-  nominated?: boolean;
-  currentRoundTripTime?: number;
-}
-
-interface InboundRtpStat {
-  type: string;
-  kind?: string;
-  packetsLost?: number;
-  packetsReceived?: number;
-  bytesReceived?: number;
-  audioLevel?: number;
-}
-
-interface OutboundRtpStat {
-  type: string;
-  kind?: string;
-  bytesSent?: number;
+/** Новый идентификатор WebRTC-сессии: каждый RTCPeerConnection получает свой. */
+export function createSessionId(): string {
+  const cryptoObj = globalThis.crypto;
+  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') return cryptoObj.randomUUID();
+  return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function describeMediaError(error: unknown): string {
@@ -124,32 +119,47 @@ function describeMediaError(error: unknown): string {
 
 export class CallSession {
   readonly callId: string;
+  readonly sessionId: string;
   readonly kind: CallKind;
   readonly polite: boolean;
+  readonly peerRole: PeerRole;
   readonly remoteStream = new MediaStream();
 
   private readonly pc: RTCPeerConnection;
   private readonly options: CallSessionOptions;
+  private readonly config: CallRuntimeConfig;
+  private readonly telemetry: CallTelemetry | null;
+  private readonly negotiator: SessionNegotiator;
+  private readonly recovery: IceRecoveryController;
+  private readonly statsAggregator = new StatsAggregator();
+
   private localStream: MediaStream | null = null;
 
-  /** Perfect negotiation: защита от встречных offer'ов. */
-  private makingOffer = false;
-  private ignoreOffer = false;
-  private isSettingRemoteAnswerPending = false;
-
-  /** Кандидаты, пришедшие до remote description. */
-  private pendingCandidates: RTCIceCandidateInit[] = [];
-
   private closed = false;
-  private iceRestartUsed = false;
-  private disconnectedTimer: number | null = null;
   private statsTimer: number | null = null;
+  private statsStarted = false;
+  private statsInFlight = false;
+  private latestStats: CallStatsSummary;
+  private previousDegraded = false;
+  private lastStatsTelemetryAt = 0;
+
   private cameraEnabled = false;
+  private currentConnectionState: RTCPeerConnectionState;
+  private restartAttempt = 0;
+  private restartAttemptId: string | null = null;
+  private readonly sessionStartedAt = Date.now();
 
   constructor(options: CallSessionOptions, iceServers: RTCIceServer[]) {
     this.callId = options.callId;
+    this.sessionId = options.sessionId ?? createSessionId();
     this.kind = options.kind;
     this.options = options;
+    this.peerRole = options.peerRole ?? (options.myUserId > options.peerUserId ? 'callee' : 'caller');
+    this.config = normalizeCallConfig(loadCallConfig(options.config));
+    this.telemetry = options.telemetry ?? null;
+    this.telemetry?.beginSession(this.sessionId);
+    this.latestStats = emptyStatsSummary(this.config.statsIntervalMs);
+
     // Строковое сравнение UUID: одинаковый результат на обеих сторонах.
     this.polite = options.myUserId > options.peerUserId;
 
@@ -158,15 +168,88 @@ export class CallSession {
       bundlePolicy: 'max-bundle',
       iceCandidatePoolSize: 2,
     });
+    this.currentConnectionState = this.pc.connectionState;
+    this.telemetry?.event('session_started', {
+      details: {
+        kind: this.kind,
+        polite: this.polite,
+        ice_server_count: iceServers.length,
+        bundle_policy: 'max-bundle',
+      },
+      statsIntervalMs: this.config.statsIntervalMs,
+    });
+
+    this.negotiator = new SessionNegotiator(
+      this.pc,
+      { polite: this.polite },
+      {
+        sendSignal: (payload: NegotiationSignal) => this.sendSignal(payload),
+        onError: (message) => this.options.onError(message),
+        onRemoteOffer: () => this.attachPreparedTracks(),
+        onAnswerApplied: () => {
+          // Ответ применён: restart больше не «в полёте», но фактическое
+          // восстановление подтверждает connected/attempt timeout.
+        },
+        onOfferCollision: ({ polite, action, remoteUfrag }) => {
+          this.telemetry?.event('offer_collision', {
+            details: { polite, action, remote_ufrag_present: remoteUfrag !== null },
+            restartAttempt: this.restartAttempt,
+            restartAttemptId: this.restartAttemptId,
+          });
+        },
+        onIceRestartFailed: (error) => {
+          this.recovery.attemptFailed(error);
+        },
+        onIgnoredCandidate: (reason) => {
+          this.telemetry?.event('candidate_ignored', {
+            details: { reason },
+            priority: 'low',
+            restartAttempt: this.restartAttempt,
+            restartAttemptId: this.restartAttemptId,
+          });
+        },
+      },
+    );
+
+    this.recovery = new IceRecoveryController(
+      {
+        disconnectedGraceMs: this.config.disconnectedGraceMs,
+        attemptTimeoutMs: this.config.iceRestartAttemptTimeoutMs,
+        maxAttempts: this.config.iceRestartMaxAttempts,
+        backoffBaseMs: this.config.iceRestartBackoffBaseMs,
+        backoffMaxMs: this.config.iceRestartBackoffMaxMs,
+      },
+      {
+        onAttempt: (info) => this.onIceRestartAttempt(info),
+        onAttemptFailed: (info) => this.onIceAttemptFailed(info),
+        onRecovered: (info) => this.onIceRecoverySucceeded(info),
+        onExhausted: (info) => this.onIceRecoveryExhausted(info),
+        onPhaseChange: (phase, detail) => {
+          if (phase === 'backoff' || phase === 'waiting') {
+            this.telemetry?.event('ice_state_changed', {
+              details: { phase, reason: detail.reason, attempt: detail.attempt },
+              priority: 'low',
+              restartAttempt: detail.attempt,
+              restartAttemptId: this.restartAttemptId,
+            });
+          }
+        },
+      },
+      {
+        createId: createSessionId,
+        isConnected: () => this.pc.connectionState === 'connected',
+      } satisfies { createId: () => string; isConnected: () => boolean; timers?: IceRecoveryTimers },
+    );
 
     this.pc.onicecandidate = (event) => {
       // Пустой candidate (end-of-candidates) не пересылаем — так требует контракт.
       if (!event.candidate || !event.candidate.candidate) return;
-      this.options.sendSignal({
+      this.sendSignal({
         type: 'candidate',
         candidate: event.candidate.candidate,
         sdp_mid: event.candidate.sdpMid ?? null,
         sdp_mline_index: event.candidate.sdpMLineIndex ?? null,
+        username_fragment: event.candidate.usernameFragment ?? null,
       });
     };
 
@@ -183,11 +266,23 @@ export class CallSession {
     };
 
     this.pc.onnegotiationneeded = () => {
-      void this.onNegotiationNeeded();
+      void this.negotiator.negotiationNeeded();
     };
 
     this.pc.onconnectionstatechange = () => {
       this.handleConnectionState(this.pc.connectionState);
+    };
+
+    this.pc.oniceconnectionstatechange = () => {
+      this.telemetry?.event('ice_state_changed', {
+        details: {
+          ice_connection_state: this.pc.iceConnectionState,
+          connection_state: this.pc.connectionState,
+        },
+        priority: 'low',
+        restartAttempt: this.restartAttempt,
+        restartAttemptId: this.restartAttemptId,
+      });
     };
   }
 
@@ -198,6 +293,22 @@ export class CallSession {
 
   get isClosed(): boolean {
     return this.closed;
+  }
+
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
+  getPeerRole(): PeerRole {
+    return this.peerRole;
+  }
+
+  getRestartAttempt(): number {
+    return this.restartAttempt;
+  }
+
+  getRestartAttemptId(): string | null {
+    return this.restartAttemptId;
   }
 
   getLocalStream(): MediaStream | null {
@@ -239,65 +350,7 @@ export class CallSession {
   /** Обработка call.signal: offer/answer/candidate по правилам perfect negotiation. */
   async handleSignal(payload: SignalPayload): Promise<void> {
     if (this.closed) return;
-
-    if (payload.type === 'candidate') {
-      const candidate: RTCIceCandidateInit = {
-        candidate: payload.candidate,
-        sdpMid: payload.sdp_mid ?? undefined,
-        sdpMLineIndex: payload.sdp_mline_index ?? undefined,
-      };
-      if (!this.pc.remoteDescription) {
-        // Буферизуем до установки remote description.
-        this.pendingCandidates.push(candidate);
-        return;
-      }
-      try {
-        await this.pc.addIceCandidate(candidate);
-      } catch (error) {
-        // Ошибку кандидата из «игнорируемого» offer'а глушим — это ожидаемо при glare.
-        if (!this.ignoreOffer) {
-          console.warn('[webrtc] addIceCandidate failed', error);
-        }
-      }
-      return;
-    }
-
-    const description: RTCSessionDescriptionInit = { type: payload.type, sdp: payload.sdp };
-    const readyForOffer =
-      !this.makingOffer && (this.pc.signalingState === 'stable' || this.isSettingRemoteAnswerPending);
-    const offerCollision = description.type === 'offer' && !readyForOffer;
-
-    this.ignoreOffer = !this.polite && offerCollision;
-    if (this.ignoreOffer) {
-      // Impolite-сторона игнорирует встречный offer: её собственный offer побеждает.
-      return;
-    }
-
-    if (offerCollision && this.polite && this.pc.signalingState === 'have-local-offer') {
-      // Polite-сторона откатывает свой локальный offer и принимает входящий.
-      await this.pc.setLocalDescription({ type: 'rollback' });
-    }
-
-    this.isSettingRemoteAnswerPending = description.type === 'answer';
-    try {
-      await this.pc.setRemoteDescription(description);
-    } catch (error) {
-      this.isSettingRemoteAnswerPending = false;
-      this.options.onError(describeMediaError(error));
-      return;
-    }
-    this.isSettingRemoteAnswerPending = false;
-
-    if (description.type === 'offer') {
-      // Только теперь добавляем свои треки — они «сядут» в transceiver'ы из offer'а.
-      await this.attachPreparedTracks();
-      const answer = await this.pc.createAnswer();
-      await this.pc.setLocalDescription(answer);
-      const local = this.pc.localDescription;
-      if (local?.sdp) this.options.sendSignal({ type: 'answer', sdp: local.sdp });
-    }
-
-    await this.flushPendingCandidates();
+    await this.negotiator.handleSignal(payload);
   }
 
   /** Включить камеру: новый трек → renegotiation (offer/answer), соединение не пересобираем. */
@@ -366,15 +419,37 @@ export class CallSession {
     for (const track of this.localStream?.getAudioTracks() ?? []) track.enabled = true;
   }
 
-  /** Полное завершение: останавливаем все локальные треки и закрываем peer connection. */
-  hangup(): void {
-    const wasClosed = this.closed;
+  /**
+   * Полное завершение: останавливаем статистику, отменяем таймеры ICE restart,
+   * прекращаем приём телеметрии, закрываем RTCPeerConnection и очищаем контекст.
+   */
+  hangup(reason = 'hangup'): void {
+    if (this.closed) return;
     this.closed = true;
+
+    this.recovery.cancel(reason);
+    this.negotiator.close();
     this.stopStatsPolling();
-    if (this.disconnectedTimer !== null) {
-      window.clearTimeout(this.disconnectedTimer);
-      this.disconnectedTimer = null;
-    }
+    this.statsAggregator.reset();
+
+    const telemetry = this.telemetry;
+    telemetry?.event('session_ended', {
+      sessionId: this.sessionId,
+      restartAttempt: this.restartAttempt,
+      restartAttemptId: this.restartAttemptId,
+      selectedCandidatePairId: this.latestStats.candidatePairId,
+      statsIntervalMs: this.latestStats.statsIntervalMs,
+      details: {
+        reason,
+        duration_ms: Math.max(0, Date.now() - this.sessionStartedAt),
+        connection_state: this.pc.connectionState,
+        ice_connection_state: this.pc.iceConnectionState,
+        restart_attempts: this.restartAttempt,
+        candidate_pair_id: this.latestStats.candidatePairId,
+        local_candidate_type: this.latestStats.localCandidateType,
+        remote_candidate_type: this.latestStats.remoteCandidateType,
+      },
+    });
 
     for (const track of this.localStream?.getTracks() ?? []) {
       try {
@@ -395,105 +470,33 @@ export class CallSession {
       }
     }
 
-    if (!wasClosed) {
-      try {
-        this.pc.close();
-      } catch {
-        // peer connection мог быть уже закрыт
-      }
-    }
-    this.pendingCandidates = [];
-  }
-
-  /** Простая сводка качества: RTT по выбранной паре и потери по inbound-rtp. */
-  async stats(): Promise<CallStatsSummary> {
-    const empty: CallStatsSummary = {
-      rttMs: null,
-      packetsLost: 0,
-      packetsReceived: 0,
-      lossPercent: 0,
-      quality: 'unknown',
-      audioInBytes: 0,
-      audioOutBytes: 0,
-      audioInLevel: null,
-    };
-    if (this.closed) return empty;
-
-    let rttMs: number | null = null;
-    let packetsLost = 0;
-    let packetsReceived = 0;
-    let audioInBytes = 0;
-    let audioOutBytes = 0;
-    let audioInLevel: number | null = null;
-
     try {
-      const report = await this.pc.getStats();
-      report.forEach((raw) => {
-        const stat = raw as CandidatePairStat & InboundRtpStat & OutboundRtpStat;
-        if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) {
-          if (typeof stat.currentRoundTripTime === 'number') rttMs = Math.round(stat.currentRoundTripTime * 1000);
-          return;
-        }
-        if (stat.type === 'inbound-rtp') {
-          packetsLost += stat.packetsLost ?? 0;
-          packetsReceived += stat.packetsReceived ?? 0;
-          if (stat.kind === 'audio') {
-            audioInBytes += stat.bytesReceived ?? 0;
-            if (typeof stat.audioLevel === 'number') audioInLevel = stat.audioLevel;
-          }
-          return;
-        }
-        if (stat.type === 'outbound-rtp' && stat.kind === 'audio') {
-          audioOutBytes += stat.bytesSent ?? 0;
-        }
-      });
+      this.pc.close();
     } catch {
-      return empty;
+      // peer connection мог быть уже закрыт
     }
 
-    const total = packetsLost + packetsReceived;
-    const lossPercent = total > 0 ? (packetsLost / total) * 100 : 0;
-
-    let quality: CallQuality = 'unknown';
-    if (rttMs !== null || total > 0) {
-      const rtt = rttMs ?? 0;
-      if (rtt < 150 && lossPercent < 2) quality = 'good';
-      else if (rtt < 400 && lossPercent < 5) quality = 'fair';
-      else quality = 'poor';
-    }
-
-    return {
-      rttMs,
-      packetsLost,
-      packetsReceived,
-      lossPercent,
-      quality,
-      audioInBytes,
-      audioOutBytes,
-      audioInLevel,
-    };
-  }
-
-  /** Периодический опрос getStats для индикатора качества. */
-  startStatsPolling(onStats: (stats: CallStatsSummary) => void): void {
-    this.stopStatsPolling();
-    this.statsTimer = window.setInterval(() => {
-      void this.stats().then(onStats);
-    }, STATS_POLL_MS);
+    this.latestStats = emptyStatsSummary(this.config.statsIntervalMs);
+    this.restartAttempt = 0;
+    this.restartAttemptId = null;
   }
 
   /**
-   * Принудительная реnegotiation с ICE restart. Используется после реконнекта WS:
+   * Принудительная renegotiation с ICE restart. Используется после реконнекта WS:
    * сигналинг мог потерять кандидатов, и соединение нужно пересобрать.
    */
-  renegotiate(): void {
+  renegotiate(reason = 'ws_resync'): void {
     if (this.closed) return;
-    this.iceRestartUsed = false;
-    try {
-      this.pc.restartIce();
-    } catch (error) {
-      this.options.onError(describeMediaError(error));
-    }
+    this.telemetry?.event('ice_restart_requested', {
+      details: {
+        reason,
+        connection_state: this.pc.connectionState,
+        ice_connection_state: this.pc.iceConnectionState,
+      },
+      restartAttempt: this.restartAttempt,
+      restartAttemptId: this.restartAttemptId,
+    });
+    this.recovery.requestRestart(reason);
   }
 
   /**
@@ -505,25 +508,276 @@ export class CallSession {
   async recoverUnansweredOffer(): Promise<void> {
     if (this.closed || this.pc.remoteDescription) return;
     try {
-      if (this.pc.signalingState === 'have-local-offer') {
-        await this.pc.setLocalDescription({ type: 'rollback' });
-      }
-      if (this.closed || this.pc.remoteDescription) return;
-      this.iceRestartUsed = false;
-      this.pc.restartIce();
+      await this.negotiator.recoverUnansweredOffer();
     } catch (error) {
       this.options.onError(describeMediaError(error));
     }
   }
 
   stopStatsPolling(): void {
+    this.statsStarted = false;
     if (this.statsTimer !== null) {
-      window.clearInterval(this.statsTimer);
+      window.clearTimeout(this.statsTimer);
       this.statsTimer = null;
     }
   }
 
+  /* ---------------- статистика ---------------- */
+
+  /** Последняя собранная сводка (не запускает новый getStats). */
+  async stats(): Promise<CallStatsSummary> {
+    if (this.closed) return emptyStatsSummary(this.config.statsIntervalMs);
+    return this.latestStats;
+  }
+
+  /** Периодический опрос getStats для индикатора качества и телеметрии. */
+  startStatsPolling(onStats: (stats: CallStatsSummary) => void): void {
+    this.stopStatsPolling();
+    this.statsStarted = true;
+    this.options.onStats = onStats;
+    this.scheduleStatsPolling(0);
+  }
+
+  private currentStatsInterval(): number {
+    if (this.recovery.isRestarting()) return this.config.statsRestartIntervalMs;
+    if (this.previousDegraded) return this.config.statsDegradedIntervalMs;
+    return this.config.statsIntervalMs;
+  }
+
+  private scheduleStatsPolling(delayMs?: number): void {
+    if (!this.statsStarted || this.closed || this.statsTimer !== null) return;
+    const delay = delayMs ?? this.currentStatsInterval();
+    this.statsTimer = window.setTimeout(() => {
+      this.statsTimer = null;
+      void this.collectStats();
+    }, Math.max(0, delay));
+  }
+
+  private async collectStats(): Promise<void> {
+    if (!this.statsStarted || this.closed || this.statsInFlight) return;
+    this.statsInFlight = true;
+    const intervalMs = this.currentStatsInterval();
+    try {
+      const report = await this.pc.getStats();
+      if (this.closed) return;
+      const summary = this.statsAggregator.sample(report, intervalMs, Date.now());
+      this.applyStats(summary);
+    } catch {
+      // Браузер может бросить InvalidStateError сразу после close — просто
+      // планируем следующий опрос, не ломая звонок.
+    } finally {
+      this.statsInFlight = false;
+      if (this.statsStarted && !this.closed) {
+        const next = this.currentStatsInterval();
+        // При повторных ошибках не крутимся вхолостую.
+        this.scheduleStatsPolling(this.latestStats.sampledAt === 0 ? STATS_MAX_BACKOFF_MS : next);
+      }
+    }
+  }
+
+  private applyStats(summary: CallStatsSummary): void {
+    const previous = this.latestStats;
+    this.latestStats = summary;
+    this.options.onStats?.(summary);
+    this.telemetry?.updateStatsInterval(summary.statsIntervalMs);
+    this.telemetry?.updateSelectedCandidatePair(summary.candidatePairId);
+
+    if (
+      previous.candidatePairId &&
+      summary.candidatePairId &&
+      previous.candidatePairId !== summary.candidatePairId
+    ) {
+      this.telemetry?.event('candidate_pair_changed', {
+        details: {
+          previous_candidate_pair_id: previous.candidatePairId,
+          next_candidate_pair_id: summary.candidatePairId,
+          local_candidate_type: summary.localCandidateType,
+          remote_candidate_type: summary.remoteCandidateType,
+        },
+        selectedCandidatePairId: summary.candidatePairId,
+        statsIntervalMs: summary.statsIntervalMs,
+        restartAttempt: this.restartAttempt,
+        restartAttemptId: this.restartAttemptId,
+      });
+    }
+
+    const degraded = isDegraded(summary);
+    if (degraded && !this.previousDegraded) {
+      this.telemetry?.event('stats_degraded', {
+        details: {
+          quality: summary.quality,
+          rtt_ms: summary.rttMs,
+          interval_loss_percent: summary.intervalLossPercent,
+          bitrate_in_bps: summary.bitrateInBps,
+          bitrate_out_bps: summary.bitrateOutBps,
+          candidate_pair_id: summary.candidatePairId,
+        },
+        selectedCandidatePairId: summary.candidatePairId,
+        statsIntervalMs: summary.statsIntervalMs,
+        restartAttempt: this.restartAttempt,
+        restartAttemptId: this.restartAttemptId,
+      });
+    } else if (!degraded && this.previousDegraded) {
+      this.telemetry?.event('stats_recovered', {
+        details: {
+          quality: summary.quality,
+          rtt_ms: summary.rttMs,
+          interval_loss_percent: summary.intervalLossPercent,
+          bitrate_in_bps: summary.bitrateInBps,
+          bitrate_out_bps: summary.bitrateOutBps,
+        },
+        selectedCandidatePairId: summary.candidatePairId,
+        statsIntervalMs: summary.statsIntervalMs,
+        restartAttempt: this.restartAttempt,
+        restartAttemptId: this.restartAttemptId,
+      });
+    }
+    this.previousDegraded = degraded;
+
+    const now = Date.now();
+    if (now - this.lastStatsTelemetryAt >= this.config.statsTelemetryIntervalMs) {
+      this.lastStatsTelemetryAt = now;
+      this.telemetry?.event('stats_sample', {
+        details: {
+          rtt_ms: summary.rttMs,
+          jitter_ms: summary.jitterMs,
+          packets_lost: summary.packetsLost,
+          packets_received: summary.packetsReceived,
+          packets_lost_delta: summary.packetsLostDelta,
+          packets_received_delta: summary.packetsReceivedDelta,
+          loss_percent: summary.lossPercent,
+          interval_loss_percent: summary.intervalLossPercent,
+          bitrate_in_bps: summary.bitrateInBps,
+          bitrate_out_bps: summary.bitrateOutBps,
+          available_outgoing_bitrate_bps: summary.availableOutgoingBitrateBps,
+          local_candidate_type: summary.localCandidateType,
+          remote_candidate_type: summary.remoteCandidateType,
+          inbound_ssrc: summary.inboundSsrc,
+          outbound_ssrc: summary.outboundSsrc,
+          delta_reset: summary.deltaReset,
+        },
+        selectedCandidatePairId: summary.candidatePairId,
+        statsIntervalMs: summary.statsIntervalMs,
+        restartAttempt: this.restartAttempt,
+        restartAttemptId: this.restartAttemptId,
+        priority: 'low',
+      });
+    }
+  }
+
+  /* ---------------- ICE recovery ---------------- */
+
+  private handleConnectionState(state: RTCPeerConnectionState): void {
+    const previous = this.currentConnectionState;
+    this.currentConnectionState = state;
+    this.options.onConnectionState(state);
+
+    if (previous !== state) {
+      this.telemetry?.event('ice_state_changed', {
+        details: { from: previous, to: state },
+        priority: 'normal',
+        restartAttempt: this.restartAttempt,
+        restartAttemptId: this.restartAttemptId,
+      });
+    }
+
+    this.recovery.handleConnectionState(state);
+  }
+
+  private onIceRestartAttempt(info: IceAttemptInfo): void {
+    this.restartAttempt = info.attempt;
+    this.restartAttemptId = info.attemptId;
+    this.telemetry?.event('ice_restart_attempt', {
+      details: {
+        reason: info.reason,
+        max_attempts: info.maxAttempts,
+        ice_connection_state: this.pc.iceConnectionState,
+        connection_state: this.pc.connectionState,
+      },
+      restartAttempt: info.attempt,
+      restartAttemptId: info.attemptId,
+      statsIntervalMs: this.config.statsRestartIntervalMs,
+    });
+    // Новая попытка — чаще опрашиваем статистику, чтобы видеть восстановление.
+    if (this.statsStarted) this.scheduleStatsPolling(0);
+    this.negotiator.requestIceRestart(info.reason);
+  }
+
+  /**
+   * Попытка ICE restart не удалась (таймаут или исключение restartIce).
+   * Событие пишется на каждую неудачную попытку: по нему видно, была ли
+   * следующая или восстановление исчерпано.
+   */
+  private onIceAttemptFailed(info: IceAttemptFailedInfo): void {
+    this.telemetry?.event('ice_restart_failed', {
+      details: {
+        error: info.error,
+        attempt: info.attempt,
+        will_retry: info.willRetry,
+        reason: info.reason,
+        restart_reason: this.negotiator.getRestartReason(),
+        connection_state: this.pc.connectionState,
+        ice_connection_state: this.pc.iceConnectionState,
+      },
+      restartAttempt: info.attempt,
+      restartAttemptId: info.attemptId,
+      statsIntervalMs: this.config.statsRestartIntervalMs,
+    });
+  }
+
+  private onIceRecoverySucceeded(info: IceRecoveredInfo): void {
+    this.telemetry?.event('ice_restart_succeeded', {
+      details: {
+        attempts: info.attempts,
+        downtime_ms: info.downtimeMs,
+        reason: info.reason,
+        connection_state: this.pc.connectionState,
+      },
+      restartAttempt: info.attempts,
+      restartAttemptId: info.lastAttemptId,
+    });
+    this.restartAttempt = 0;
+    this.restartAttemptId = null;
+  }
+
+  private onIceRecoveryExhausted(info: IceExhaustedInfo): void {
+    this.telemetry?.event('ice_restart_exhausted', {
+      details: {
+        attempts: info.attempts,
+        reason: info.reason,
+        last_error: info.lastError,
+        connection_state: this.pc.connectionState,
+        ice_connection_state: this.pc.iceConnectionState,
+      },
+      restartAttempt: info.attempts,
+      restartAttemptId: info.lastAttemptId,
+    });
+
+    const message = this.describeRecoveryFailure(info);
+    this.options.onError(message);
+    this.options.onConnectionRecoveryFailed?.(message);
+    this.restartAttempt = 0;
+    this.restartAttemptId = null;
+  }
+
+  private describeRecoveryFailure(info: IceExhaustedInfo): string {
+    if (info.reason === 'ice_restart_disabled') {
+      return 'Соединение потеряно: автоматический ICE restart выключен';
+    }
+    const attemptsText = info.attempts === 1 ? '1 попытка' : `${info.attempts} попытки`;
+    const last = info.lastError ? ` (${info.lastError})` : '';
+    return `Не удалось восстановить соединение: ${attemptsText} ICE restart${last}`;
+  }
+
   /* ---------------- внутреннее ---------------- */
+
+  private sendSignal(payload: NegotiationSignal): void {
+    try {
+      this.options.sendSignal(payload as SignalPayload);
+    } catch (error) {
+      this.options.onError(error instanceof Error ? error.message : 'Не удалось отправить сигнал');
+    }
+  }
 
   private ensureLocalStream(): MediaStream {
     if (!this.localStream) this.localStream = new MediaStream();
@@ -630,79 +884,6 @@ export class CallSession {
       const alreadyAdded = this.pc.getSenders().some((sender) => sender.track === track);
       if (alreadyAdded) continue;
       this.pc.addTrack(track, stream);
-    }
-  }
-
-  private async onNegotiationNeeded(): Promise<void> {
-    if (this.closed) return;
-    try {
-      this.makingOffer = true;
-      await this.pc.setLocalDescription();
-      const local = this.pc.localDescription;
-      if (local?.sdp) this.options.sendSignal({ type: 'offer', sdp: local.sdp });
-    } catch (error) {
-      this.options.onError(describeMediaError(error));
-    } finally {
-      this.makingOffer = false;
-    }
-  }
-
-  private async flushPendingCandidates(): Promise<void> {
-    if (this.pendingCandidates.length === 0) return;
-    const queued = [...this.pendingCandidates];
-    this.pendingCandidates = [];
-    for (const candidate of queued) {
-      try {
-        await this.pc.addIceCandidate(candidate);
-      } catch (error) {
-        if (!this.ignoreOffer) console.warn('[webrtc] buffered addIceCandidate failed', error);
-      }
-    }
-  }
-
-  private handleConnectionState(state: RTCPeerConnectionState): void {
-    this.options.onConnectionState(state);
-
-    if (state === 'connected') {
-      this.iceRestartUsed = false;
-      if (this.disconnectedTimer !== null) {
-        window.clearTimeout(this.disconnectedTimer);
-        this.disconnectedTimer = null;
-      }
-      return;
-    }
-
-    if (state === 'disconnected') {
-      // ICE часто восстанавливается сам; даём шанс, потом пробуем ICE restart.
-      if (this.disconnectedTimer === null) {
-        this.disconnectedTimer = window.setTimeout(() => {
-          this.disconnectedTimer = null;
-          if (!this.closed && this.pc.connectionState !== 'connected') {
-            this.tryIceRestart('проблема с соединением');
-          }
-        }, DISCONNECTED_GRACE_MS);
-      }
-      return;
-    }
-
-    if (state === 'failed') {
-      this.tryIceRestart('соединение разорвано');
-    }
-  }
-
-  /** Автоматический ICE restart — ровно один раз на инцидент. */
-  private tryIceRestart(reason: string): void {
-    if (this.closed) return;
-    if (this.iceRestartUsed) {
-      this.options.onError(`Не удалось восстановить соединение (${reason})`);
-      return;
-    }
-    this.iceRestartUsed = true;
-    try {
-      // restartIce() поднимает negotiationneeded → новый offer с новыми ICE-кредами.
-      this.pc.restartIce();
-    } catch (error) {
-      this.options.onError(describeMediaError(error));
     }
   }
 }

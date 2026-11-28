@@ -40,6 +40,7 @@ public record AbvProperties(
         Cors cors,
         Ws ws,
         Chat chat,
+        Telemetry telemetry,
         Mail mail,
         EmailVerification emailVerification,
         String fcmServiceAccountFile
@@ -67,6 +68,13 @@ public record AbvProperties(
 
     /** Ограничения групповых диалогов. */
     public record Chat(int maxGroupMembers, int maxTitleLength) {
+    }
+
+    /**
+     * Клиентская телеметрия звонков: включение приёма, пределы batch'а и одной
+     * NDJSON-строки. Пишется в stdout, поэтому размер строки ограничен явно.
+     */
+    public record Telemetry(boolean enabled, int maxBatchEvents, int maxEventBytes) {
     }
 
     /** SMTP-транспорт: локальный Postfix на хосте или внешний релей. */
@@ -161,8 +169,21 @@ public record AbvProperties(
         requirePositive("CHAT_MAX_GROUP_MEMBERS", chat.maxGroupMembers() - 1L);
         requirePositive("CHAT_MAX_TITLE_LENGTH", chat.maxTitleLength());
 
+        validateTelemetry();
         validateMail();
         validateEmailVerification();
+    }
+
+    private void validateTelemetry() {
+        if (telemetry == null) {
+            throw new IllegalStateException("abv.telemetry is not configured");
+        }
+        if (telemetry.maxBatchEvents() < 1 || telemetry.maxBatchEvents() > 500) {
+            throw new IllegalStateException("ABV_TELEMETRY_MAXBATCHEVENTS must be within 1..500");
+        }
+        if (telemetry.maxEventBytes() < 512 || telemetry.maxEventBytes() > 65_536) {
+            throw new IllegalStateException("ABV_TELEMETRY_MAXEVENTBYTES must be within 512..65536");
+        }
     }
 
     private void validateMail() {

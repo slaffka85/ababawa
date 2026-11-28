@@ -364,6 +364,13 @@ docker compose --env-file .env.production --env-file .deploy.env \
   -f compose.prod.yaml logs -f web api postgres
 ```
 
+Логи в Docker — временное решение «на один хост»: `json-file` ротируется
+(10 МБ × 3 файла на контейнер, `x-logging` в `compose.prod.yaml`) и не переживает
+пересоздание контейнера. Полноценный поиск по логам и телеметрии звонков —
+в отдельном стеке **monitoring**: Alloy читает Docker-логи и пишет в Loki,
+смотреть — в Grafana (дашборд «ababawa / Calls & Telemetry»). Настройка и
+ретеншен описаны в README стека monitoring.
+
 ## Откат, данные и дополнительные настройки
 
 В `/opt/abavava/.deploy.env` указаны полные теги обоих образов. Для отката

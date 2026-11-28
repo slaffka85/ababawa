@@ -24,11 +24,13 @@ import type {
   MessagePageResponse,
   RegisterPendingResponse,
   ResendResponse,
+  TelemetryAcceptedResponse,
   TypingState,
   User,
   UserEnvelope,
   UUID,
 } from './types';
+import type { CallTelemetryEvent } from './telemetry';
 
 const ACCESS_KEY = 'abv.access';
 const REFRESH_KEY = 'abv.refresh';
@@ -641,6 +643,19 @@ export const callsApi = {
     return request<CallEnvelope>(`/calls/${encodeURIComponent(callId)}/end`, {
       method: 'POST',
       body: reason ? { reason } : {},
+    });
+  },
+
+  /**
+   * Клиентская телеметрия звонка: один batch событий.
+   * `retryOnUnauthorized: false` — фоновая телеметрия не должна инициировать
+   * logout или refresh-лавину; при сетевой ошибке её повторяет сам клиент.
+   */
+  telemetry(events: CallTelemetryEvent[]): Promise<TelemetryAcceptedResponse> {
+    return request<TelemetryAcceptedResponse>('/calls/telemetry', {
+      method: 'POST',
+      body: { events },
+      retryOnUnauthorized: false,
     });
   },
 };

@@ -12,8 +12,12 @@ import { createAudioMeter, speakingFromStatsLevel } from '../lib/audio-meter';
 import type { AudioMeterHandle } from '../lib/audio-meter';
 import { listMicrophones, onDeviceChange, rememberedMicId, rememberMicId } from '../lib/media-devices';
 import type { MicDevice } from '../lib/media-devices';
-import { CallSession } from '../lib/webrtc';
+import { CallSession, createSessionId } from '../lib/webrtc';
 import type { CallQuality, CallStatsSummary } from '../lib/webrtc';
+import { loadCallConfig } from '../lib/call-config';
+import { createCallTelemetry } from '../lib/telemetry';
+import type { CallTelemetry, PeerRole } from '../lib/telemetry';
+import { postCallTelemetry } from '../lib/telemetry-transport';
 import { ringtone } from '../lib/ringtone';
 import { wsClient } from '../lib/ws';
 import { useAuthStore } from './auth';
@@ -53,6 +57,15 @@ let localMeterTrackId: string | null = null;
 let remoteMeterTrackId: string | null = null;
 /** Подписка на подключение/отключение устройств ввода. */
 let deviceChangeUnsubscribe: (() => void) | null = null;
+
+/**
+ * Телеметрия живёт в рамках логического звонка (callId), а не WebRTC-сессии:
+ * при пересоздании RTCPeerConnection меняется только sessionId.
+ */
+let callTelemetry: CallTelemetry | null = null;
+let telemetryCallId: UUID | null = null;
+/** Момент начала звонка — для duration_ms в call_ended. */
+let callStartedAt = 0;
 
 /** Следит за появлением новых микрофонов (например, подключили гарнитуру). */
 function armDeviceChangeListener(): void {
@@ -183,7 +196,7 @@ export const useCallStore = create<CallState>((set, get) => ({
     set({ call });
     armWatchdog(() => {
       // Сервер сам переведёт звонок в missed; это лишь подстраховка при потере WS.
-      finishLocally('Нет ответа');
+      finishLocally('Нет ответа', undefined, 'no_answer');
     });
 
     try {
@@ -197,7 +210,7 @@ export const useCallStore = create<CallState>((set, get) => ({
       const message = error instanceof Error ? error.message : 'Не удалось получить доступ к медиа';
       toast.error('Звонок не начат', message);
       void endCallOnServer(call.id, 'failed');
-      finishLocally(message);
+      finishLocally(message, undefined, 'failed');
     }
   },
 
@@ -223,7 +236,7 @@ export const useCallStore = create<CallState>((set, get) => ({
       const message = error instanceof Error ? error.message : 'Нет доступа к медиа';
       toast.error('Не удалось принять звонок', message);
       void endCallOnServer(call.id, 'failed');
-      finishLocally(message);
+      finishLocally(message, undefined, 'failed');
       return;
     }
     sessionPendingMedia = false;
@@ -245,17 +258,22 @@ export const useCallStore = create<CallState>((set, get) => ({
         api.calls.reject(call.id, 'rejected'),
       );
     }
-    finishLocally('Звонок отклонён');
+    finishLocally('Звонок отклонён', undefined, 'rejected');
   },
 
   hangup: () => {
     const call = get().call;
+    const canceled = get().phase === 'outgoing';
     if (call && get().phase !== 'ended') {
       sendCallEvent('call.end', { call_id: call.id, reason: 'hangup' }, () =>
         api.calls.end(call.id, 'hangup'),
       );
     }
-    finishLocally(get().phase === 'outgoing' ? 'Звонок отменён' : 'Звонок завершён');
+    finishLocally(
+      canceled ? 'Звонок отменён' : 'Звонок завершён',
+      undefined,
+      canceled ? 'canceled' : 'hangup',
+    );
   },
 
   toggleMute: () => {
@@ -336,7 +354,7 @@ export const useCallStore = create<CallState>((set, get) => ({
     ringtone.start();
     armWatchdog(() => {
       // Если сервер так и не прислал missed — закрываем модалку сами.
-      finishLocally('Пропущенный звонок');
+      finishLocally('Пропущенный звонок', undefined, 'missed');
     });
   },
 
@@ -404,7 +422,7 @@ export const useCallStore = create<CallState>((set, get) => ({
         notice = 'Звонок завершён';
         break;
     }
-    finishLocally(notice, call.duration_seconds);
+    finishLocally(notice, call.duration_seconds, call.end_reason ?? call.status);
   },
 
   handleCallSignal: (callId, payload) => {
@@ -439,7 +457,7 @@ export const useCallStore = create<CallState>((set, get) => ({
           get().handleCallIncoming(call);
         } else if (call.caller_id === myUserId && get().phase === 'idle') {
           set({ phase: 'outgoing', call });
-          armWatchdog(() => finishLocally('Нет ответа'));
+          armWatchdog(() => finishLocally('Нет ответа', undefined, 'no_answer'));
         }
         return;
       }
@@ -473,9 +491,14 @@ export const useCallStore = create<CallState>((set, get) => ({
   reset: () => {
     clearAllTimers();
     ringtone.stop();
+    disposeMeters();
     bufferedSignals = [];
     sessionPendingMedia = false;
+    // Оверлей могли закрыть в обход finishLocally — освобождаем медиа и
+    // телеметрию, чтобы не оставить живой RTCPeerConnection и таймеры.
+    session?.hangup('reset');
     session = null;
+    closeCallTelemetry('reset');
     set({
       phase: 'idle',
       call: null,
@@ -486,6 +509,7 @@ export const useCallStore = create<CallState>((set, get) => ({
       durationSeconds: 0,
       connectionState: null,
       quality: 'unknown',
+      stats: null,
       error: null,
       notice: null,
     });
@@ -507,15 +531,98 @@ function peerOf(call: Call, myUserId: UUID): UUID {
   return call.caller_id === myUserId ? call.callee_id : call.caller_id;
 }
 
+/** Роль участника в звонке: caller/callee (определяется по call.caller_id). */
+function peerRoleOf(call: Call, myUserId: UUID): PeerRole {
+  return call.caller_id === myUserId ? 'caller' : 'callee';
+}
+
+/**
+ * Телеметрия на логический звонок. Первый вызов создаёт очередь и событие
+ * call_started, последующие WebRTC-сессии переиспользуют её и только меняют
+ * sessionId (beginSession).
+ */
+function ensureCallTelemetry(call: Call, myUserId: UUID, sessionId: string): CallTelemetry {
+  const peerRole = peerRoleOf(call, myUserId);
+  if (callTelemetry && telemetryCallId === call.id) {
+    callTelemetry.beginSession(sessionId);
+    return callTelemetry;
+  }
+
+  // Предыдущий звонок мог не закрыться штатно — добиваем его очередь.
+  if (callTelemetry) void callTelemetry.close();
+  callTelemetry = null;
+  telemetryCallId = null;
+
+  const config = loadCallConfig();
+  const created = createCallTelemetry({
+    callId: call.id,
+    sessionId,
+    peerRole,
+    transport: postCallTelemetry,
+    config: {
+      batchSize: config.telemetryBatchSize,
+      flushIntervalMs: config.telemetryFlushIntervalMs,
+      maxBuffer: config.telemetryMaxBuffer,
+      maxRetries: config.telemetryMaxRetries,
+      retryBaseMs: config.telemetryRetryBaseMs,
+      retryMaxMs: config.telemetryRetryMaxMs,
+    },
+  });
+  created.start();
+  callStartedAt = Date.now();
+  created.event('call_started', {
+    details: {
+      kind: call.kind,
+      peer_role: peerRole,
+      conversation_id: call.conversation_id,
+      connection_flow: 'webrtc_1to1',
+    },
+    priority: 'critical',
+  });
+
+  callTelemetry = created;
+  telemetryCallId = call.id;
+  return created;
+}
+
+/**
+ * Завершает телеметрию звонка: финальное call_ended, затем закрытие очереди
+ * (close дожидается последнего batch'а, но не блокирует UI — вызывается без await).
+ */
+function closeCallTelemetry(reason: string, details: Record<string, unknown> = {}): void {
+  const telemetry = callTelemetry;
+  callTelemetry = null;
+  telemetryCallId = null;
+  if (!telemetry) return;
+
+  telemetry.event('call_ended', {
+    details: {
+      reason,
+      duration_ms: callStartedAt > 0 ? Math.max(0, Date.now() - callStartedAt) : 0,
+      ...details,
+    },
+    priority: 'critical',
+  });
+  callStartedAt = 0;
+  void telemetry.close();
+}
+
 async function createSession({ call, myUserId, onError }: CreateSessionParams): Promise<CallSession> {
   const set = useCallStore.setState;
   const peerUserId = peerOf(call, myUserId);
+  // sessionId генерируем здесь, чтобы телеметрия знала его с первого события;
+  // каждый новый RTCPeerConnection получает новый sessionId.
+  const sessionId = createSessionId();
+  const telemetry = ensureCallTelemetry(call, myUserId, sessionId);
 
   const created = await CallSession.create({
     callId: call.id,
     kind: call.kind,
     myUserId,
     peerUserId,
+    sessionId,
+    peerRole: peerRoleOf(call, myUserId),
+    telemetry,
     // Каждый сигнал уходит отдельным событием call.signal.
     sendSignal: (payload) => {
       if (!wsClient.isOpen()) {
@@ -740,8 +847,13 @@ async function endCallOnServer(callId: UUID, reason: string): Promise<void> {
   }
 }
 
-/** Локальное завершение: гасим медиа, показываем подсказку и закрываем оверлей. */
-function finishLocally(notice: string, durationOverride?: number): void {
+/**
+ * Локальное завершение: гасим медиа, показываем подсказку и закрываем оверлей.
+ *
+ * `reason` — машинная причина (hangup/rejected/missed/failed/…): она уходит в
+ * session_ended и call_ended, поэтому по NDJSON видно, чем закончился звонок.
+ */
+function finishLocally(notice: string, durationOverride?: number, reason = 'hangup'): void {
   const set = useCallStore.setState;
   const state = useCallStore.getState();
 
@@ -753,8 +865,15 @@ function finishLocally(notice: string, durationOverride?: number): void {
   bufferedSignals = [];
   sessionPendingMedia = false;
 
-  session?.hangup();
+  // session.hangup() останавливает stats collector, отменяет таймеры ICE restart,
+  // закрывает RTCPeerConnection и пишет session_ended; после этого закрываем
+  // очередь телеметрии (call_ended + финальный flush).
+  session?.hangup(reason);
   session = null;
+  closeCallTelemetry(reason, {
+    phase: state.phase,
+    had_session: state.localStream !== null || state.connectionState !== null,
+  });
 
   const duration =
     durationOverride ?? (state.phase === 'active' ? Math.max(state.durationSeconds, 0) : 0);
